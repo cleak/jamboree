@@ -70,6 +70,16 @@ After it runs, GPG/`pass` initialization for `maestro` is a manual one-time step
 
 If you change the script, validate generated sudoers with `visudo -cf <tempfile>` before installing — the script already does this; preserve the pattern. The script also writes an audit record to `/etc/jam/bootstrap.log` that `jam doctor` reads as the verified-good baseline.
 
+## Running the CLI-tools installer
+
+```bash
+sudo ./scripts/install-cli-tools.sh               # codex + claude-code per user, plus daily auto-update cron
+sudo ./scripts/install-cli-tools.sh --dry-run
+sudo ./scripts/install-cli-tools.sh --verify-only
+```
+
+Run after `bootstrap-users.sh` has succeeded. Installs `@openai/codex` and `@anthropic-ai/claude-code` per-user for `caleb`, `maestro`, and `picker` — never as root, because both tools' auto-updaters require write access to their install directory. Wires up `/etc/cron.d/jam-cli-update` to run `cli-tools-update.sh` once a day for each user (4:15 / 4:30 / 4:45 AM, staggered). See `security-setup.md` §4.5.
+
 ## Load-bearing principles to preserve
 
 When editing the spec or writing related code, these v5 principles are non-negotiable (cite by number in code comments per §2):

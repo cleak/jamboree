@@ -174,7 +174,7 @@ In order, with each step's success/failure surfaced:
 - Initialize GPG keyrings or `pass` stores. These are manual one-time steps documented in §5 below.
 - Move existing data from a single-user `~/.jam/` setup to `~maestro/.jam/`. See §8 for migration.
 - Configure NATS or any orchestrator service. That's `jam setup`'s job.
-- Install harness binaries. Done as `caleb` via the harness installers, then verified into `harnesses.lock`.
+- Install harness CLI binaries (`codex`, `claude-code`). Done by `install-cli-tools.sh` (§4.5).
 
 ### 4.4 Failure modes
 
@@ -185,6 +185,28 @@ Each preflight check fails with a specific error and remediation hint, matching 
 - "Group membership applied but not active in this shell" → tells you to log out and back in.
 
 If you suspect partial state, run `--verify-only` for a non-destructive audit.
+
+### 4.5 CLI tool installation (`install-cli-tools.sh`)
+
+After `bootstrap-users.sh` has created the service users, `install-cli-tools.sh` installs the harness CLIs (`@openai/codex` via npm, `@anthropic-ai/claude-code` via the official native installer) **per-user** for `caleb`, `maestro`, and `picker`, and configures a daily auto-update cron job for each.
+
+Per-user (not root) is required because both tools refuse to update — and Claude Code refuses to run at all — when their install location is root-owned. Each user's tokens land in their own home (`~/.codex/auth.json`, `~/.claude/...`) with mode 700, so the existing user-isolation boundary covers credential separation as well.
+
+```bash
+sudo ./install-cli-tools.sh                  # interactive, uses $SUDO_USER
+sudo ./install-cli-tools.sh --user caleb     # explicit human user
+sudo ./install-cli-tools.sh --dry-run        # show what would happen
+sudo ./install-cli-tools.sh --verify-only    # audit without changing
+```
+
+The companion `cli-tools-update.sh` runs once a day per user via `/etc/cron.d/jam-cli-update` (staggered at 4:15 / 4:30 / 4:45 AM local). It uses `flock` to prevent concurrent runs, logs to `~/.cache/jam-cli-update.log`, and isolates failures so a bad update can only damage one user's installation. To disable auto-updates: `sudo rm /etc/cron.d/jam-cli-update`.
+
+WSL note: the cron daemon does not start automatically. After install, run `sudo service cron start`, and add the following to `/etc/wsl.conf` so it persists across `wsl --shutdown`:
+
+```ini
+[boot]
+command="service cron start"
+```
 
 ---
 

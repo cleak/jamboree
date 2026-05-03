@@ -57,7 +57,7 @@ What this model does **not** defend against:
 ├── .gnupg/                                     mode 700   caleb:caleb        (maestro cannot read)
 ├── .password-store/                            mode 700   caleb:caleb        (caleb's personal pass — separate from maestro's)
 ├── .config/                                    mode 700   caleb:caleb
-├── .jam-cli/                                  mode 750   caleb:caleb        (caleb's CLI client config; preferences, UI tokens)
+├── .jam/                                       mode 750   caleb:caleb        (caleb's CLI client config; preferences, UI tokens)
 └── code/                                       mode 755   caleb:caleb        (Caleb's project workspace)
     ├── blueberry/                              mode 755   caleb:caleb        (PRISTINE — maestro never writes here)
     ├── blueberry-tempyr-live/                  mode 2770  caleb:maestro     (canonical Tempyr worktree, shared)

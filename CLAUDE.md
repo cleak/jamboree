@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this directory is
 
-`/home/caleb/orchberry/` is the **design + bootstrap home** for **Jamboree** — the multi-coding-agent orchestrator that drives Caleb's Bevy/Rust voxel game *Blueberry*. This directory contains the spec and the prerequisite system bootstrap; the orchestrator's actual implementation does not live here.
+`/home/caleb/jamboree/` is the **design + bootstrap home** for **Jamboree** — the multi-coding-agent orchestrator that drives Caleb's Bevy/Rust voxel game *Blueberry*. This directory contains the spec and the prerequisite system bootstrap; the orchestrator's actual implementation does not live here.
 
 Contents:
 
@@ -12,7 +12,7 @@ Contents:
 - `docs/security-setup.md` — v5 addendum for the multi-user isolation model (`maestro` substrate user, `picker` worker user).
 - `scripts/bootstrap-users.sh` — idempotent bash script that creates the service users, sudoers config, and shared-directory scaffolding. Prerequisite to `jam setup`.
 
-The Jamboree implementation (Rust workspace `crates/jam-*/`, Python `jam_conductor/`, SolidJS `ui/`) lives in a separate repo not yet checked out here, and at runtime under `/home/maestro/.jam/` per `security-setup.md` §7.1. Do not scaffold it inside `/home/caleb/orchberry/`.
+The Jamboree implementation (Rust workspace `crates/jam-*/`, Python `jam_conductor/`, SolidJS `ui/`) lives in a separate repo not yet checked out here, and at runtime under `/home/maestro/.jam/` per `security-setup.md` §7.1. Do not scaffold it inside `/home/caleb/jamboree/`.
 
 Sibling directories on this machine that are relevant:
 - `/home/caleb/blueberry/` — the Bevy/Rust voxel game (Jamboree's initial target). Has its own `CLAUDE.md`/`AGENTS.md`.

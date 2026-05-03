@@ -3446,7 +3446,7 @@ No restart. No reload command. Hot-edit just works.
 
 ```
 Human runs: jam patch apply observe 0.4.8
-  → jam-cli writes staged binary, emits patch.staged
+  → the jam CLI writes staged binary, emits patch.staged
   → patch-agent observes, acquires patch-lock
   → procedure (§20.3)
   → manifest updated in NATS KV
@@ -3881,7 +3881,7 @@ $ jam task spawn 'Refactor canyon generator to use spline-based seam protocols' 
     --project blueberry --task-class compile-heavy-rust --priority normal
 ```
 
-**`jam-cli` (Rust)** receives the command:
+**`jam` CLI (Rust)** receives the command:
 
 ```rust
 // crates/jam-cli/src/commands/task.rs

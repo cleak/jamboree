@@ -1,0 +1,48 @@
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor / IDE
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+.vim/
+.nvim/
+*.code-workspace
+
+# Local env / secrets — never commit
+.env
+.env.*
+!.env.example
+secrets.toml
+*.pem
+*.key
+
+# Patch / merge leftovers
+*.orig
+*.rej
+
+# Local-only working notes (drafts the Manager keeps but doesn't share)
+NOTES.local.md
+TODO.local.md
+scratch/
+.scratch/
+
+# Backups & temp
+*.bak
+*.tmp
+/tmp/
+
+# If implementation ever lands here (it shouldn't — see CLAUDE.md), don't track build output
+target/
+node_modules/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+build/

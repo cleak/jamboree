@@ -204,7 +204,7 @@ Key-Type: ed25519
 Key-Usage: sign
 Subkey-Type: cv25519
 Subkey-Usage: encrypt
-Name-Real: Orch Service
+Name-Real: Jamboree Maestro
 Name-Email: maestro@localhost
 Expire-Date: 0
 %commit
@@ -226,19 +226,34 @@ exit
 
 ### 5.3 Add the orchestrator's secrets
 
+The Maestro's LLM access uses ChatGPT-subscription OAuth (no `pass` entry needed — GPT-5.5 is subscription-gated, so an OpenAI API key wouldn't grant access to the current default model anyway, per spec §4.1). All other secrets — GitHub auth, search backends, ntfy, NATS, etc. — go in maestro's pass store.
+
+**Conductor OAuth (one-time):**
+
+```bash
+sudo -u maestro -i
+codex login   # device-code flow; stores token at ~maestro/.codex/auth.json
+exit
+```
+
+The same OAuth credential powers any Codex-based Picker, so no separate harness token is needed for those.
+
+**All other secrets via pass:**
+
 ```bash
 # As caleb, populate maestro's pass via sudo:
-sudo -u maestro -i pass insert jam/conductor/openai-api-key
-sudo -u maestro -i pass insert jam/conductor/anthropic-api-key
-sudo -u maestro -i pass insert jam/workers/deepseek-api-key
 sudo -u maestro -i pass insert jam/workers/github-app-id
 sudo -u maestro -i pass insert -m jam/workers/github-app-key   # multiline for PEM key
 sudo -u maestro -i pass insert jam/search/brave
 sudo -u maestro -i pass insert jam/search/firecrawl
+sudo -u maestro -i pass insert jam/notify/ntfy-token
+sudo -u maestro -i pass insert jam/nats/token
 # ... etc, per the v5 §11.3.1 key list
 ```
 
 Each `pass insert` prompts for the value (or paste, for `-m` multiline). Keys are stored encrypted under `~maestro/.password-store/`, only decryptable with `maestro`'s GPG key.
+
+If the conductor is ever switched to a non-Codex provider (Anthropic API, OpenRouter, DeepSeek-as-conductor, etc. per §4.1), populate the corresponding key from §11.3.1 (e.g. `jam/conductor/anthropic-api-key`) and reconfigure LiteLLM. GPT-5.5 via ChatGPT Pro is the default.
 
 ### 5.4 Caleb's personal pass stays separate
 
@@ -250,8 +265,12 @@ Caleb's existing `~caleb/.password-store/` (if any) is unaffected. The orchestra
 sudo -u maestro -i pass list
 # Should show the keys you added under jam/.
 
-sudo -u maestro -i pass show jam/conductor/openai-api-key
+sudo -u maestro -i pass show jam/workers/github-app-id
 # Should print the value.
+
+# Verify Codex OAuth landed:
+sudo -u maestro -i ls -la /home/maestro/.codex/auth.json
+# Should show the token file (mode 600, owned by maestro:maestro).
 ```
 
 ---

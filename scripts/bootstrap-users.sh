@@ -567,8 +567,17 @@ Next steps:
         KEY_PARAMS
         pass init maestro@localhost
         exit
-  3. Add orchestrator secrets via:  sudo -u $MAESTRO_USER -i pass insert jam/conductor/openai-api-key
-  4. Run: jam setup    (which now also verifies this user-isolation layout)
+  3. Authenticate the Maestro to OpenAI via Codex OAuth (uses your ChatGPT
+     subscription — GPT-5.5 is subscription-gated, no API key needed):
+        sudo -u $MAESTRO_USER -i
+        # in the maestro shell:
+        codex login   # device-code flow; stores token at ~maestro/.codex/auth.json
+        exit
+  4. Add other orchestrator secrets to maestro's pass store
+     (GitHub PAT, ntfy creds, etc. — see security-setup.md §5.3 / spec §11.3.1):
+        sudo -u $MAESTRO_USER -i pass insert jam/conductor/github-pat
+        # ... repeat for each key
+  5. Run: jam setup    (which now also verifies this user-isolation layout)
 
 See security-setup.md for full operational details.
 EOF

@@ -56,8 +56,8 @@ die() {
 # ---------------------------------------------------------------------------
 
 SECRETS=(
-    "jam/workers/github-app-id|single|recommended|Numeric GitHub App ID for the Jamboree-installed App. Required for any Picker that creates PRs."
-    "jam/workers/github-app-key|multi|recommended|PEM-format private key for the GitHub App (the entire -----BEGIN/-----END block)."
+    "jam/pickers/github-app-id|single|recommended|Numeric GitHub App ID for the Jamboree-installed App. Required for any Picker that creates PRs."
+    "jam/pickers/github-app-key|multi|recommended|PEM-format private key for the GitHub App (the entire -----BEGIN/-----END block)."
     "jam/notify/ntfy-token|single|recommended|ntfy.sh token used to page the Manager when something fails or needs sign-off."
     "jam/search/brave|single|recommended|Brave Search API key — default search-router backend per spec §4.8. Free tier (2k/mo) at https://brave.com/search/api/. Without this, web-search tool calls have no backend until you enable another provider below."
     "jam/nats/token|single|optional|NATS auth token. Skip unless you have enabled NATS authentication."
@@ -66,7 +66,7 @@ SECRETS=(
     "jam/search/linkup|single|optional|Linkup search API key. Defer unless you specifically need its factuality/freshness profile."
     "jam/search/perplexity|single|optional|Perplexity Sonar API key. Returns synthesized answers; usually wrong shape for an agent."
     "jam/search/tavily|single|optional|Tavily search API key. Smaller free tier than Brave; benchmarks slightly behind."
-    "jam/workers/deepseek-api-key|single|optional|DeepSeek API key. Only needed if a DeepSeek-backed harness is configured."
+    "jam/pickers/deepseek-api-key|single|optional|DeepSeek API key. Only needed if a DeepSeek-backed harness is configured."
     "jam/mcp/composio|single|optional|Composio MCP gateway API key."
     "jam/tailscale/auth-key|single|optional|Tailscale tailnet auth key. Only needed if remote access is configured."
 )

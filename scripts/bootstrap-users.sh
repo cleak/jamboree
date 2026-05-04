@@ -275,7 +275,7 @@ write_sudoers() {
 # workstation. Anyone with a shell as $HUMAN_USER can become maestro
 # without further authentication; this is acceptable because we already
 # trust the human user's session, and the protection here is against
-# unprivileged code (workers, untrusted content) — not against an
+# unprivileged code (Pickers, untrusted content) — not against an
 # attacker who already has the human user's shell.
 
 # $HUMAN_USER -> maestro / picker
@@ -284,7 +284,7 @@ $HUMAN_USER ALL=($MAESTRO_USER)    NOPASSWD: ALL
 $HUMAN_USER ALL=($PICKER_USER) NOPASSWD: ALL
 
 # maestro -> picker
-# Required for harness adapters to spawn workers as picker
+# Required for harness adapters to spawn Pickers as picker
 $MAESTRO_USER ALL=($PICKER_USER) NOPASSWD: ALL
 
 # Allow these transitions to preserve specified env vars (trace IDs, secrets)
@@ -342,7 +342,7 @@ prepare_maestro_dirs() {
         "$svc_home/.jam/journal"
         "$svc_home/.jam/research"
         "$svc_home/.jam/incidents"
-        "$svc_home/.jam/conductor-aborted-sessions"
+        "$svc_home/.jam/maestro-aborted-sessions"
         "$svc_home/.jam/skills-evolution-candidates"
         "$svc_home/.jam/staging"
         "$svc_home/.jam/nats-data"
@@ -363,11 +363,11 @@ prepare_maestro_dirs() {
 }
 
 prepare_picker_dirs() {
-    local worker_home="/home/$PICKER_USER"
-    if [[ ! -d "$worker_home/workers" ]] && [[ $DRY_RUN -eq 0 ]]; then
-        run_cmd install -d -m 750 -o "$PICKER_USER" -g "$PICKER_USER" "$worker_home/workers"
+    local picker_home="/home/$PICKER_USER"
+    if [[ ! -d "$picker_home/workers" ]] && [[ $DRY_RUN -eq 0 ]]; then
+        run_cmd install -d -m 750 -o "$PICKER_USER" -g "$PICKER_USER" "$picker_home/workers"
     fi
-    pass "picker workers dir prepared at $worker_home/workers (mode 750)"
+    pass "picker workers dir prepared at $picker_home/workers (mode 750)"
 }
 
 # ---------------------------------------------------------------------------
@@ -576,7 +576,7 @@ Next steps:
         sudo -u $MAESTRO_USER -i codex login   # device-code OAuth
   5. Add other orchestrator secrets to maestro's pass store
      (GitHub PAT, ntfy creds, etc. — see security-setup.md §5.3 / spec §11.3.1):
-        sudo -u $MAESTRO_USER -i pass insert jam/conductor/github-pat
+        sudo -u $MAESTRO_USER -i pass insert jam/pickers/github-pat
         # ... repeat for each key
   6. Run: jam setup    (which now also verifies this user-isolation layout)
 

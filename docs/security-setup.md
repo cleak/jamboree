@@ -22,7 +22,7 @@ The v5 spec assumes multi-user isolation is in place but does not document the s
 - Migration from a single-user setup.
 - Recovery, gotchas, and `jam doctor` integration.
 
-The model is deliberately convenience-first: NOPASSWD sudo between users, no per-task user creation, no Docker required. This is appropriate for a single-developer machine where the human user's session is already trusted. It buys substantial defense against the most realistic attacks (prompt-injection-driven exfiltration, worker-running-rogue) at low operational cost. Hardening to a per-task or per-worktree user model is possible later by enabling the Docker backend (§6.2 in v5) without changing this baseline.
+The model is deliberately convenience-first: NOPASSWD sudo between users, no per-task user creation, no Docker required. This is appropriate for a single-developer machine where the human user's session is already trusted. It buys substantial defense against the most realistic attacks (prompt-injection-driven exfiltration, picker-running-rogue) at low operational cost. Hardening to a per-task or per-worktree user model is possible later by enabling the Docker backend (§6.2 in v5) without changing this baseline.
 
 ---
 
@@ -30,13 +30,13 @@ The model is deliberately convenience-first: NOPASSWD sudo between users, no per
 
 The orchestrator runs many sandboxed coding agents in parallel. Realistic threats by likelihood:
 
-**1. Prompt injection driving secret exfiltration.** A CodeRabbit comment, MCP response, web-search result, or PR description contains text that induces the worker LLM to do something it wasn't asked. "Exfiltrate creds" is a known attack pattern: read SSH keys, AWS credentials, browser session tokens, and post them somewhere. **High likelihood.**
+**1. Prompt injection driving secret exfiltration.** A CodeRabbit comment, MCP response, web-search result, or PR description contains text that induces the Picker LLM to do something it wasn't asked. "Exfiltrate creds" is a known attack pattern: read SSH keys, AWS credentials, browser session tokens, and post them somewhere. **High likelihood.**
 
-**2. Worker going off-rails on its own code.** Worker writes garbage to its worktree, deletes files, runs unexpected `cargo install` of dependencies. Bounded by worktree creation protocol; minor recovery cost. **Medium likelihood.**
+**2. Picker going off-rails on its own code.** Picker writes garbage to its worktree, deletes files, runs unexpected `cargo install` of dependencies. Bounded by worktree creation protocol; minor recovery cost. **Medium likelihood.**
 
-**3. Worker pushing malicious code.** Worker pushes a hidden change to `main`, or to an unrelated repo it has push access to. Doesn't require malice — induced by injection. **Medium likelihood.**
+**3. Picker pushing malicious code.** Picker pushes a hidden change to `main`, or to an unrelated repo it has push access to. Doesn't require malice — induced by injection. **Medium likelihood.**
 
-**4. Worker burning money.** Worker calls expensive APIs in a loop. Bounded by quota tracker for instrumented harnesses; budget-cap escapes from this protection are possible if the worker calls non-orchestrated APIs. **Low likelihood given Caleb's setup.**
+**4. Picker burning money.** Picker calls expensive APIs in a loop. Bounded by quota tracker for instrumented harnesses; budget-cap escapes from this protection are possible if the Picker calls non-orchestrated APIs. **Low likelihood given Caleb's setup.**
 
 The multi-user model targets threat #1 directly, threats #2 and #3 partially, and is orthogonal to #4 (which is handled by quota tracking and per-session budgets in v5).
 
@@ -75,7 +75,7 @@ What this model does **not** defend against:
     ├── session-store.db                                                       (SQLite + FTS5 derived view)
     ├── research/                                                              (research output dirs per task)
     ├── incidents/                                                             (patch agent failure dumps)
-    ├── conductor-aborted-sessions/                                            (hard-abort session dumps)
+    ├── maestro-aborted-sessions/                                              (hard-abort session dumps)
     ├── skills-evolution-candidates/                                           (pending skill diffs)
     ├── staging/                                                               (binaries staged for hot-patching)
     ├── nats-data/                                                             (JetStream durable state)
@@ -84,7 +84,7 @@ What this model does **not** defend against:
 
 /home/picker/                              mode 750   picker:picker
 └── workers/                                    mode 750   picker:picker
-    └── <task-id>/                              mode 700   picker:picker  (per-worker worktree, isolated even from other workers)
+    └── <task-id>/                              mode 700   picker:picker  (per-Picker worktree, isolated even from other Pickers)
 
 /etc/sudoers.d/jam-users                       mode 440   root:root
 /etc/jam/bootstrap.log                   mode 644   root:root          (audit record of bootstrap)
@@ -96,7 +96,7 @@ What this model does **not** defend against:
 
 - Shared dirs use group `maestro` with mode `2770`. The leading `2` is the **setgid** bit: new files created in these directories inherit the directory's group, so caleb-created files in `tempyr/nodes/` are still group-readable by maestro without manual `chgrp`. Both `caleb` (as owner) and `maestro` (as group) have full rwx; others have nothing.
 
-- Per-worker worktrees are `700`. Even though all workers share UID `picker`, the worktree directory permissions prevent one worker from reading another's mid-task state. Combined with sandbox `cwd` enforcement, this is "soft per-worker isolation" without requiring per-task user creation.
+- Per-Picker worktrees are `700`. Even though all Pickers share UID `picker`, the worktree directory permissions prevent one Picker from reading another's mid-task state. Combined with sandbox `cwd` enforcement, this is "soft per-Picker isolation" without requiring per-task user creation.
 
 - `/home/maestro` is `750` with no group share. Caleb cannot directly read maestro's home. To access maestro's files, caleb sudos in (`sudo -u maestro -i`).
 
@@ -121,9 +121,9 @@ Defaults!/usr/bin/* setenv
 **What each line allows:**
 
 - `caleb -> maestro`: caleb runs ops commands without password (start/stop services, inspect journal, run `jam doctor`).
-- `caleb -> picker`: caleb inspects worker state without password (debug a stuck worker, look at worktree contents).
-- `maestro -> picker`: the orchestrator spawns workers via `sudo -u picker` from its harness adapters. Required for the worker process to run under the unprivileged identity.
-- `SETENV` on each transition: required for the harness adapter to pass `JAM_TRACE_ID`, `JAM_PARENT_TRACE_ID`, secrets, etc., into the worker's environment via `sudo --preserve-env=KEY1,KEY2`.
+- `caleb -> picker`: caleb inspects Picker state without password (debug a stuck Picker, look at worktree contents).
+- `maestro -> picker`: the orchestrator spawns Pickers via `sudo -u picker` from its harness adapters. Required for the Picker process to run under the unprivileged identity.
+- `SETENV` on each transition: required for the harness adapter to pass `JAM_TRACE_ID`, `JAM_PARENT_TRACE_ID`, secrets, etc., into the Picker's environment via `sudo --preserve-env=KEY1,KEY2`.
 
 **What it deliberately does not allow:**
 
@@ -188,7 +188,7 @@ If you suspect partial state, run `--verify-only` for a non-destructive audit.
 
 ### 4.5 CLI tool installation (`install-cli-tools.sh`)
 
-After `bootstrap-users.sh` has created the service users, `install-cli-tools.sh` installs both harness CLIs (`@openai/codex` via npm and `@anthropic-ai/claude-code` via the official native installer) **per-user** for `caleb`, `maestro`, and `picker`, and configures a daily auto-update cron job for each. All three users get both tools so the conductor and Pickers can be driven by either harness without a re-install.
+After `bootstrap-users.sh` has created the service users, `install-cli-tools.sh` installs both harness CLIs (`@openai/codex` via npm and `@anthropic-ai/claude-code` via the official native installer) **per-user** for `caleb`, `maestro`, and `picker`, and configures a daily auto-update cron job for each. All three users get both tools so the Maestro and Pickers can be driven by either harness without a re-install.
 
 Per-user (not root) is required because both tools refuse to update — and Claude Code refuses to run at all — when their install location is root-owned. Each user's tokens land in their own home (`~/.codex/auth.json`, `~/.claude/...`) with mode 700, so the existing user-isolation boundary covers credential separation as well.
 
@@ -252,7 +252,7 @@ exit
 
 The Maestro's LLM access uses ChatGPT-subscription OAuth (no `pass` entry needed — GPT-5.5 is subscription-gated, so an OpenAI API key wouldn't grant access to the current default model anyway, per spec §4.1). All other secrets — GitHub auth, search backends, ntfy, NATS, etc. — go in maestro's pass store.
 
-**Conductor OAuth (one-time):**
+**Maestro OAuth (one-time):**
 
 ```bash
 sudo -u maestro -i
@@ -270,8 +270,8 @@ The recommended workflow is `seed-maestro-secrets.sh` (interactive, idempotent w
 
 ```bash
 # As caleb, populate maestro's pass via sudo:
-sudo -u maestro -i pass insert jam/workers/github-app-id
-sudo -u maestro -i pass insert -m jam/workers/github-app-key   # multiline for PEM key
+sudo -u maestro -i pass insert jam/pickers/github-app-id
+sudo -u maestro -i pass insert -m jam/pickers/github-app-key   # multiline for PEM key
 sudo -u maestro -i pass insert jam/notify/ntfy-token
 sudo -u maestro -i pass insert jam/nats/token
 sudo -u maestro -i pass insert jam/search/brave                # default starter; see §4.8 of v5
@@ -282,7 +282,7 @@ Each `pass insert` prompts for the value (or paste, for `-m` multiline). Keys ar
 
 For search backends specifically, see proposal-v5.md §4.8 — the recommended initial deploy is **Brave alone**. Other providers (Exa, Firecrawl, Linkup, Perplexity, Tavily) live in the spec for forward compatibility but should not be populated up-front.
 
-If the conductor is ever switched to a non-Codex provider (Anthropic API, OpenRouter, DeepSeek-as-conductor, etc. per §4.1), populate the corresponding key from §11.3.1 (e.g. `jam/conductor/anthropic-api-key`) and reconfigure LiteLLM. GPT-5.5 via ChatGPT Pro is the default.
+If the Maestro is ever switched to a non-Codex provider (Anthropic API, OpenRouter, DeepSeek-as-Maestro, etc. per §4.1), populate the corresponding key from §11.3.1 (e.g. `jam/maestro/anthropic-api-key`) and reconfigure LiteLLM. GPT-5.5 via ChatGPT Pro is the default.
 
 ### 5.4 Caleb's personal pass stays separate
 
@@ -294,7 +294,7 @@ Caleb's existing `~caleb/.password-store/` (if any) is unaffected. The orchestra
 sudo -u maestro -i pass list
 # Should show the keys you added under jam/.
 
-sudo -u maestro -i pass show jam/workers/github-app-id
+sudo -u maestro -i pass show jam/pickers/github-app-id
 # Should print the value.
 
 # Verify Codex OAuth landed:
@@ -347,7 +347,7 @@ If you'd rather not have the CLI shell out to sudo on every command, an alternat
 Journal:
 
 ```bash
-sudo -u maestro -i tail -f /home/maestro/.jam/journal/$(date -u +%Y-%m-%d)/journal.worker.jsonl
+sudo -u maestro -i tail -f /home/maestro/.jam/journal/$(date -u +%Y-%m-%d)/journal.picker.jsonl
 sudo -u maestro -i ls /home/maestro/.jam/journal/
 ```
 
@@ -363,7 +363,7 @@ nvim projects/blueberry/hot-paths.md
 git add . && git commit -m "Update hot-path guidance"
 ```
 
-The orchestrator's inotify watcher (running as maestro) fires; the conductor invalidates the skill cache; next session reads the updated content. No restart, no reload command.
+The orchestrator's inotify watcher (running as maestro) fires; the Maestro invalidates the skill cache; next session reads the updated content. No restart, no reload command.
 
 ### 6.5 Editing Tempyr nodes
 
@@ -371,7 +371,7 @@ Same pattern, in `~caleb/code/blueberry-tempyr-live/tempyr/nodes/`. Setgid ensur
 
 `tempyr/tasks/` files are written by the orchestrator (maestro); caleb can read them but should not write them. They're journal-derived and would be overwritten anyway.
 
-### 6.6 Inspecting a stuck worker
+### 6.6 Inspecting a stuck Picker
 
 ```bash
 sudo -u picker -i ls /home/picker/workers/
@@ -387,7 +387,7 @@ If the orchestrator is doing something bad and you want everything to halt:
 
 ```bash
 sudo -u maestro jam pause-dispatch --reason "manual intervention"
-sudo -u picker pkill -TERM -u picker      # kill all worker processes
+sudo -u picker pkill -TERM -u picker      # kill all Picker processes
 sudo systemctl stop jam                            # if running under systemd
 ```
 
@@ -421,11 +421,11 @@ For the skills repo path specifically, add a config:
 skills-repo = "/home/caleb/code/jam-skills"
 ```
 
-The conductor reads this; the inotify watcher uses this path; CLI tools that read skills use this path.
+The Maestro reads this; the inotify watcher uses this path; CLI tools that read skills use this path.
 
-### 7.2 Worker spawn (§4.5.1, §24.3)
+### 7.2 Picker spawn (§4.5.1, §24.3)
 
-The harness adapter must spawn the worker as `picker` rather than as the orchestrator's own user. Replace the v5 spawn pattern:
+The harness adapter must spawn the Picker as `picker` rather than as the orchestrator's own user. Replace the v5 spawn pattern:
 
 ```rust
 // v5 §24.3 (single-user)
@@ -463,7 +463,7 @@ Worktree path also changes: `~/.jam/worktrees/<task-id>/` becomes `/home/picker/
 
 The `pass` backend in v5 implicitly uses caleb's pass store. With the multi-user model, the orchestrator's pass store belongs to `maestro`. Two implementation options:
 
-**Option A — orchestrator services run as maestro.** When the conductor / tool services run as `maestro`, GPG and `pass` find maestro's keyring naturally via `$HOME`. No code changes needed beyond running services as the right user. **Preferred.**
+**Option A — orchestrator services run as maestro.** When the Maestro / tool services run as `maestro`, GPG and `pass` find maestro's keyring naturally via `$HOME`. No code changes needed beyond running services as the right user. **Preferred.**
 
 **Option B — bridge via sudo when needed.** If a service runs as a different user but needs maestro's pass, use `sudo -n -u maestro -i pass show <key>`. Slower and grants more capability than necessary. **Avoid unless option A is impossible.**
 
@@ -478,8 +478,8 @@ processes:
   nats:
     command: /usr/local/bin/nats-server -c /home/maestro/.jam/config/nats.toml
     user: maestro
-  conductor:
-    command: /opt/jam/bin/jam-conductor
+  maestro:
+    command: /opt/jam/bin/jam-maestro
     user: maestro
     environment:
       - JAM_HOME=/home/maestro/.jam
@@ -586,11 +586,11 @@ Caleb's existing `pass` store is encrypted to caleb's GPG key. maestro cannot re
 pass list jam/
 
 # For each, copy the value and re-insert into maestro's pass:
-pass show jam/conductor/openai-api-key | sudo -u maestro -i pass insert -e jam/conductor/openai-api-key
+pass show jam/maestro/openai-api-key | sudo -u maestro -i pass insert -e jam/maestro/openai-api-key
 # ... repeat for each key
 
 # Then delete from caleb's pass to avoid confusion:
-pass rm jam/conductor/openai-api-key
+pass rm jam/maestro/openai-api-key
 # ...
 ```
 
@@ -598,7 +598,7 @@ The `-e` flag to `pass insert` reads the value from stdin (avoiding a prompt).
 
 ### 8.5 Update config paths
 
-Edit `~maestro/.jam/config/conductor.toml`, `secrets.toml`, etc., to reflect new paths if any are absolute references to caleb's home. Most should use `$JAM_HOME` or relative paths and not need changes.
+Edit `~maestro/.jam/config/maestro.toml`, `secrets.toml`, etc., to reflect new paths if any are absolute references to caleb's home. Most should use `$JAM_HOME` or relative paths and not need changes.
 
 ### 8.6 Restart and verify
 
@@ -607,7 +607,7 @@ sudo -u maestro -i jam start
 jam doctor
 ```
 
-Expect every check to pass. Spot-check a worker spawn to confirm the new layout works end-to-end.
+Expect every check to pass. Spot-check a Picker spawn to confirm the new layout works end-to-end.
 
 ---
 
@@ -721,7 +721,7 @@ You'll lose maestro's pass store (encrypted secrets) unless you backed up `~maes
 20. Skills repo path exists and is readable by the running user
 21. Canonical Tempyr worktree per active project has correct group ownership and setgid
 22. maestro's pass store has the expected keys (per project config)
-23. Worker spawn smoke test: sudo -u picker can write to a temp file in /home/picker/workers/
+23. Picker spawn smoke test: sudo -u picker can write to a temp file in /home/picker/workers/
 24. picker cannot sudo (verify least privilege)
 ```
 
@@ -731,9 +731,9 @@ Each of these maps to a specific failure mode covered above. Like the original 1
 
 ## 11. Summary
 
-The multi-user model adds three Linux user accounts and a sudoers config to provide kernel-enforced filesystem isolation between the human user, the orchestrator's substrate, and worker processes. Setup is one bash script (`bootstrap-users.sh`) plus one manual GPG/pass init. Day-to-day operation is unchanged: caleb runs `jam` CLI commands as caleb; the orchestrator runs as maestro; workers run as picker.
+The multi-user model adds three Linux user accounts and a sudoers config to provide kernel-enforced filesystem isolation between the human user, the orchestrator's substrate, and Picker processes. Setup is one bash script (`bootstrap-users.sh`) plus one manual GPG/pass init. Day-to-day operation is unchanged: caleb runs `jam` CLI commands as caleb; the orchestrator runs as maestro; Pickers run as picker.
 
-The defense gained: workers cannot read SSH keys, AWS credentials, browser sessions, or other user-owned secrets. The orchestrator's substrate cannot read the human user's secrets. Per-worker worktree isolation prevents one worker from interfering with another. GitHub access is bounded by App-scoped installation tokens.
+The defense gained: Pickers cannot read SSH keys, AWS credentials, browser sessions, or other user-owned secrets. The orchestrator's substrate cannot read the human user's secrets. Per-Picker worktree isolation prevents one Picker from interfering with another. GitHub access is bounded by App-scoped installation tokens.
 
 The cost: one bootstrap step, one GPG init step, slightly more mental overhead about which user owns which path. The convenience model (NOPASSWD sudo, no per-task user creation, no Docker) keeps day-to-day friction near zero.
 

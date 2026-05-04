@@ -125,21 +125,21 @@ print_next_steps() {
 Next: populate the orchestrator's secrets (security-setup.md §5.3).
 Each command prompts for the secret; -m means multi-line (paste, then Ctrl+D):
 
-    pass insert    jam/workers/github-app-id
-    pass insert -m jam/workers/github-app-key
+    pass insert    jam/pickers/github-app-id
+    pass insert -m jam/pickers/github-app-key
     pass insert    jam/search/brave
     pass insert    jam/search/firecrawl
     pass insert    jam/notify/ntfy-token
     pass insert    jam/nats/token
 
 (Full key list: spec §11.3.1. Codex OAuth is already covered by
-~/.codex/auth.json, so no jam/conductor/* entry is needed for the default
+~/.codex/auth.json, so no jam/maestro/* entry is needed for the default
 ChatGPT-subscription setup.)
 
 Verify with:
 
     pass list
-    pass show jam/workers/github-app-id
+    pass show jam/pickers/github-app-id
 EOF
 }
 

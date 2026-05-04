@@ -4,15 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this directory is
 
-`/home/caleb/jamboree/` is the **design + bootstrap home** for **Jamboree** — the multi-coding-agent orchestrator that drives Caleb's Bevy/Rust voxel game *Blueberry*. This directory contains the spec and the prerequisite system bootstrap; the orchestrator's actual implementation does not live here.
+`/home/caleb/jamboree/` is the home for **Jamboree** — the multi-coding-agent orchestrator that drives Caleb's Bevy/Rust voxel game *Blueberry*. This is a **monorepo**: the spec, the bootstrap scripts, and the orchestrator's implementation (Rust + Python + SolidJS) all live in the same git checkout. See `docs/layout.md` for the layout decision and full directory map.
 
 Contents:
 
 - `docs/proposal-v5.md` — implementation-ready architecture spec (4,400+ lines, §0–§24). Sections cite each other extensively (`§4.6.1`-style); follow the cross-references rather than re-deriving design.
-- `docs/security-setup.md` — v5 addendum for the multi-user isolation model (`maestro` substrate user, `picker` worker user).
-- `scripts/bootstrap-users.sh` — idempotent bash script that creates the service users, sudoers config, and shared-directory scaffolding. Prerequisite to `jam setup`.
+- `docs/security-setup.md` — v5 addendum for the multi-user isolation model (`maestro` substrate user, `picker` Picker user).
+- `docs/layout.md` — monorepo decision and directory layout reference.
+- `scripts/` — idempotent bash scripts for system bootstrap (users, CLI tools, keyring, secrets seed). Prerequisite to `jam setup`.
+- `crates/`, `maestro/`, `ui/` — implementation directories, scaffolded as Phase 3 work begins.
 
-The Jamboree implementation (Rust workspace `crates/jam-*/`, Python `jam_conductor/`, SolidJS `ui/`) lives in a separate repo not yet checked out here, and at runtime under `/home/maestro/.jam/` per `security-setup.md` §7.1. Do not scaffold it inside `/home/caleb/jamboree/`.
+Source-of-truth lives here. **Runtime** deploys to `/home/maestro/.jam/` per `security-setup.md` §7.1; build artifacts cross the user boundary via `jam patch apply` (spec §21.6).
 
 Sibling directories on this machine that are relevant:
 - `/home/caleb/blueberry/` — the Bevy/Rust voxel game (Jamboree's initial target). Has its own `CLAUDE.md`/`AGENTS.md`.
@@ -26,8 +28,8 @@ The Jamboree theme is musical (many agents jamming in parallel; harvest preserve
 | Role | Jamboree name | Who/what |
 |---|---|---|
 | Human operator | **the Manager** | Books gigs (queues tasks), funds the budget, gets paged when things go wrong, signs off on encores (PR merges) |
-| Conductor agent (Python) | **the Maestro** | Calls every tune, cues every Picker, runs the show in real time |
-| Workers (sandboxed coding agents) | **the Pickers** | Berry pickers + guitar pickers + task-pickers; one per task in its own Booth |
+| Orchestrator agent (Python) | **the Maestro** | Calls every tune, cues every Picker, runs the show in real time |
+| Sandboxed coding agents | **the Pickers** | Berry pickers + guitar pickers + task-pickers; one per task in its own Booth |
 
 Linux user mapping:
 
@@ -35,9 +37,9 @@ Linux user mapping:
 |---|---|---|
 | Caleb (human) | `caleb` | 1000 |
 | Substrate (runs the Maestro and all backline services) | `maestro` | 2000 |
-| Workers | `picker` | 2001 |
+| Pickers | `picker` | 2001 |
 
-When the spec uses lowercase "the conductor" or "workers", those are the technical roles; **the Maestro** and **the Pickers** are the named instances. Outside these three names, everything stays descriptive.
+Use **the Maestro** and **the Pickers** consistently. Earlier drafts used lowercase "conductor" and "workers" for the same concepts; those have been collapsed to a single name per role. Code identifiers follow lowercase Linux convention: `jam_maestro` (Python package), `maestro.toml` (config), `maestro/` (source dir), and the `maestro` / `picker` Linux users.
 
 ## When to keep / drop the `jam-` prefix
 
@@ -45,7 +47,7 @@ Established convention: prefix where the namespace is shared with the rest of th
 
 **Keep the prefix** for: Rust crates (`jam-svc-observe`, `jam-stall-detector`), process names under process-compose, env vars (`JAM_HOME`, `JAM_TRACE_ID`), system paths (`/etc/jam/`, `/etc/sudoers.d/jam-users`), the future systemd unit (`jam.service`), and the ntfy topic.
 
-**Drop the prefix** for: the CLI binary (`jam`, not `jam-cli`), subcommands (`jam setup`, `jam doctor`), files inside `~/.jam/` (just `conductor.toml`, not `jam-conductor.toml`), skill files, NATS subjects (`journal.worker.spawned`, not `jam.journal.…`), tool names called by the Maestro (`world-snapshot`, not `jam-world-snapshot`), this repo's `scripts/` and `docs/` filenames, and audit logs inside an already-prefixed system dir (`/etc/jam/bootstrap.log`).
+**Drop the prefix** for: the CLI binary (`jam`, not `jam-cli`), subcommands (`jam setup`, `jam doctor`), files inside `~/.jam/` (just `maestro.toml`, not `jam-maestro.toml`), skill files, NATS subjects (`journal.picker.spawned`, not `jam.journal.…`), tool names called by the Maestro (`world-snapshot`, not `jam-world-snapshot`), this repo's `scripts/` and `docs/` filenames, and audit logs inside an already-prefixed system dir (`/etc/jam/bootstrap.log`).
 
 Rule: **prefix where the namespace is shared with the rest of the OS; drop it where the namespace is already `jam`.**
 
@@ -55,7 +57,7 @@ Rule: **prefix where the namespace is shared with the rest of the OS; drop it wh
 2. **Modify the bootstrap script.** It must stay idempotent, support `--dry-run` and `--verify-only`, and follow the "fail loudly with specific remediation" pattern from spec §2.12.
 3. **Add new docs or scripts** that will eventually become part of the Jamboree runbook.
 
-If asked to implement orchestrator code (Rust services, Python conductor, UI), confirm with the user where it should live — the spec assumes a separate `jamboree/` repo, not this directory.
+Implementation work (Rust services, Python Maestro, UI) happens in this same monorepo per `docs/layout.md`. Scaffolding goes under `crates/`, `maestro/`, and `ui/` — see the layout doc for the full tree before adding new top-level directories.
 
 ## Running the bootstrap script
 
@@ -112,8 +114,8 @@ Shared dirs (`~/code/blueberry-tempyr-live/`, `~/code/jam-skills/`) use mode `27
 - **Markdown:** GitHub-flavored. Code blocks use language tags. Section anchors are stable (`§4.5.1`-style cross-references depend on them).
 - **Bash scripts:** `set -euo pipefail`. Mirror the bootstrap script's `pass`/`fail`/`info`/`warn`/`die` helpers and "Fix:" remediation block style — this is the same pattern `jam doctor` uses.
 - **Dates in docs:** UTC, RFC 3339 where precise; `YYYY-MM-DD` in headers. The spec currently dates to 2026-05-03.
-- **Don't introduce a Cargo workspace, Python package, or `package.json` here** unless explicitly asked — implementation belongs in a separate `jamboree/` repo.
+- **Cargo workspace, Python package, and `package.json`** all live in this monorepo under `crates/`, `maestro/`, and `ui/` respectively. See `docs/layout.md` for the full directory tree.
 
 ## When the user says "the bulk of the work happens under other accounts"
 
-They mean: most code creation and Picker execution will happen as `maestro` and `picker`, in worktrees under `/home/picker/workers/`. This caleb-side directory holds the design and the bootstrap that *enables* that — keep edits here scoped to docs, scripts, and the operator-facing surface. If you find yourself wanting to write production Rust/Python here, stop and ask.
+They mean: at *runtime*, most code execution happens as `maestro` (the orchestrator process and its services) and `picker` (sandboxed Picker processes operating in worktrees under `/home/picker/workers/<task-id>/`). *Source-of-truth* still lives in this caleb-owned monorepo — design (`docs/`), bootstrap (`scripts/`), and implementation (`crates/`, `maestro/`, `ui/`) all here. Build artifacts cross the user boundary via `jam patch apply` (spec §21.6); source-of-truth never moves.

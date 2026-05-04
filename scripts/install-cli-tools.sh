@@ -4,7 +4,7 @@
 #
 # Tools per user:
 #   <human>  — codex + claude-code  (dev/test on caleb's account)
-#   maestro  — codex + claude-code  (conductor harness; either may drive it)
+#   maestro  — codex + claude-code  (Maestro harness; either may drive it)
 #   picker   — codex + claude-code  (Picker harnesses execute as picker)
 #
 # Per-user installs (not root) because both @openai/codex and the official

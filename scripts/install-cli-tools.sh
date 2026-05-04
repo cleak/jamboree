@@ -4,7 +4,7 @@
 #
 # Tools per user:
 #   <human>  — codex + claude-code  (dev/test on caleb's account)
-#   maestro  — codex                (one-time `codex login` for the conductor)
+#   maestro  — codex + claude-code  (conductor harness; either may drive it)
 #   picker   — codex + claude-code  (Picker harnesses execute as picker)
 #
 # Per-user installs (not root) because both @openai/codex and the official
@@ -278,7 +278,7 @@ verify() {
     local failed=0
 
     for entry in "$HUMAN_USER:codex" "$HUMAN_USER:claude" \
-                 "$MAESTRO_USER:codex" \
+                 "$MAESTRO_USER:codex" "$MAESTRO_USER:claude" \
                  "$PICKER_USER:codex" "$PICKER_USER:claude"; do
         local user="${entry%%:*}"
         local tool="${entry##*:}"
@@ -365,6 +365,7 @@ main() {
     header "Installing tools for $MAESTRO_USER"
     ensure_npm_prefix "$MAESTRO_USER"
     install_codex "$MAESTRO_USER"
+    install_claude_code "$MAESTRO_USER"
 
     header "Installing tools for $PICKER_USER"
     ensure_npm_prefix "$PICKER_USER"
@@ -384,10 +385,15 @@ main() {
     cat <<EOF
 
 Next steps:
-  1. Authenticate each user to their subscription:
-        sudo -u $HUMAN_USER -i claude            # first launch triggers OAuth
-        sudo -u $MAESTRO_USER -i codex login     # device-code OAuth
-        sudo -u $PICKER_USER  -i codex login
+  1. Authenticate each user to their subscription. codex must use
+     --device-auth so the OAuth flow does not require a local browser
+     redirect (Maestro/Picker have no display; --device-auth prints a
+     URL + code to enter on another device):
+        sudo -u $HUMAN_USER   -i claude                     # first launch triggers OAuth
+        sudo -u $HUMAN_USER   -i codex login --device-auth
+        sudo -u $MAESTRO_USER -i codex login --device-auth
+        sudo -u $MAESTRO_USER -i claude
+        sudo -u $PICKER_USER  -i codex login --device-auth
         sudo -u $PICKER_USER  -i claude
 
   2. Confirm cron is running (WSL doesn't auto-start it):

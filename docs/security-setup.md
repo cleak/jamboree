@@ -188,7 +188,7 @@ If you suspect partial state, run `--verify-only` for a non-destructive audit.
 
 ### 4.5 CLI tool installation (`install-cli-tools.sh`)
 
-After `bootstrap-users.sh` has created the service users, `install-cli-tools.sh` installs the harness CLIs (`@openai/codex` via npm, `@anthropic-ai/claude-code` via the official native installer) **per-user** for `caleb`, `maestro`, and `picker`, and configures a daily auto-update cron job for each.
+After `bootstrap-users.sh` has created the service users, `install-cli-tools.sh` installs both harness CLIs (`@openai/codex` via npm and `@anthropic-ai/claude-code` via the official native installer) **per-user** for `caleb`, `maestro`, and `picker`, and configures a daily auto-update cron job for each. All three users get both tools so the conductor and Pickers can be driven by either harness without a re-install.
 
 Per-user (not root) is required because both tools refuse to update — and Claude Code refuses to run at all — when their install location is root-owned. Each user's tokens land in their own home (`~/.codex/auth.json`, `~/.claude/...`) with mode 700, so the existing user-isolation boundary covers credential separation as well.
 
@@ -222,9 +222,11 @@ sudo -u maestro -i
 # inside maestro's shell:
 gpg --batch --pinentry-mode loopback --gen-key <<'KEY_PARAMS'
 %no-protection
-Key-Type: ed25519
+Key-Type: EDDSA
+Key-Curve: ed25519
 Key-Usage: sign
-Subkey-Type: cv25519
+Subkey-Type: ECDH
+Subkey-Curve: cv25519
 Subkey-Usage: encrypt
 Name-Real: Jamboree Maestro
 Name-Email: maestro@localhost
@@ -254,26 +256,31 @@ The Maestro's LLM access uses ChatGPT-subscription OAuth (no `pass` entry needed
 
 ```bash
 sudo -u maestro -i
-codex login   # device-code flow; stores token at ~maestro/.codex/auth.json
+codex login --device-auth   # prints a URL + code to enter on another device;
+                            # stores token at ~maestro/.codex/auth.json
+claude                       # first launch triggers Claude Code OAuth
 exit
 ```
 
-The same OAuth credential powers any Codex-based Picker, so no separate harness token is needed for those.
+`--device-auth` is required because `maestro` (and `picker`) have no local browser session to receive the default OAuth redirect — the device-auth flow prints a one-time code to paste on a logged-in device instead. The same Codex OAuth credential powers any Codex-based Picker, so no separate harness token is needed for those.
 
 **All other secrets via pass:**
+
+The recommended workflow is `seed-maestro-secrets.sh` (interactive, idempotent walk through the canonical list). The equivalent manual commands:
 
 ```bash
 # As caleb, populate maestro's pass via sudo:
 sudo -u maestro -i pass insert jam/workers/github-app-id
 sudo -u maestro -i pass insert -m jam/workers/github-app-key   # multiline for PEM key
-sudo -u maestro -i pass insert jam/search/brave
-sudo -u maestro -i pass insert jam/search/firecrawl
 sudo -u maestro -i pass insert jam/notify/ntfy-token
 sudo -u maestro -i pass insert jam/nats/token
-# ... etc, per the v5 §11.3.1 key list
+sudo -u maestro -i pass insert jam/search/brave                # default starter; see §4.8 of v5
+# ... add other search backends only as workload demands them
 ```
 
 Each `pass insert` prompts for the value (or paste, for `-m` multiline). Keys are stored encrypted under `~maestro/.password-store/`, only decryptable with `maestro`'s GPG key.
+
+For search backends specifically, see proposal-v5.md §4.8 — the recommended initial deploy is **Brave alone**. Other providers (Exa, Firecrawl, Linkup, Perplexity, Tavily) live in the spec for forward compatibility but should not be populated up-front.
 
 If the conductor is ever switched to a non-Codex provider (Anthropic API, OpenRouter, DeepSeek-as-conductor, etc. per §4.1), populate the corresponding key from §11.3.1 (e.g. `jam/conductor/anthropic-api-key`) and reconfigure LiteLLM. GPT-5.5 via ChatGPT Pro is the default.
 

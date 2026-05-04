@@ -558,9 +558,11 @@ Next steps:
         # in the maestro shell:
         gpg --batch --gen-key <<KEY_PARAMS
             %no-protection
-            Key-Type: ed25519
+            Key-Type: EDDSA
+            Key-Curve: ed25519
             Key-Usage: sign
-            Subkey-Type: cv25519
+            Subkey-Type: ECDH
+            Subkey-Curve: cv25519
             Subkey-Usage: encrypt
             Name-Real: Jamboree Maestro
             Name-Email: maestro@localhost

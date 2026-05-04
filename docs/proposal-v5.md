@@ -1299,6 +1299,8 @@ Default routing policy:
 | Multi-hop deep research | Exa Deep Research | Parallel Pro → Sonar Pro |
 | Privacy-sensitive | SearXNG | — |
 
+**Recommended initial setup.** The routing table above describes the full design surface, but operational deploys should start narrow. Default starter: **Brave only** — best agentic-search benchmark score (14.89), fastest p50 (669 ms), 2k-query free tier, independent index. Add additional backends in response to a named shortfall, not pre-emptively. Most likely second-add: **Exa**, when code-pattern semantic discovery becomes a frequent query intent. **Firecrawl** is the most likely third-add when Pickers start needing clean URL extraction (it lives in the search trait but the value is the `extract`/`crawl` shape, not the search shape).
+
 **Cooldown.** 1 hour after any backend failure (matches the `hermes-web-search-plus` plugin pattern). The failed backend skipped from routing until cooldown expires; if all backends in chain fail, surface an error rather than silently degrading (§2.12).
 
 Configuration:
@@ -1333,6 +1335,8 @@ Tools exposed:
 Three pieces of plumbing become first-class.
 
 **Per-project MCP server registry.** Config-driven. Different projects might need different MCPs.
+
+**Context7 is load-bearing for fast-moving-library workloads.** Bevy ships breaking changes per minor release; LLM training data always lags. Context7 has version-pinned doc indexes (e.g. `bevy_ecs/0.16.1`, Tokio `1.49.0`) that solve the "model writes 0.13 patterns into a 0.16 codebase" failure mode. Always-on for any Picker doing code work; the Maestro itself does not need it (delegate research-with-docs subtasks to a Picker rather than spending conductor tool-call budget on doc lookups).
 
 ```toml
 # ~/.jam/config/projects/blueberry.toml

@@ -837,6 +837,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "jam-svc-observe"
+version = "0.1.0"
+dependencies = [
+ "async-nats",
+ "chrono",
+ "futures",
+ "jam-nats",
+ "jam-trace",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "jam-trace"
 version = "0.1.0"
 dependencies = [

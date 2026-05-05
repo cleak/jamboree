@@ -9,6 +9,7 @@ members = [
     "crates/jam-setup",
     "crates/jam-cli",
     "crates/jam-nats-bridge",
+    "crates/jam-svc-observe",
 ]
 
 [workspace.package]

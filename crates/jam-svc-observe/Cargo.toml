@@ -1,0 +1,29 @@
+[package]
+name = "jam-svc-observe"
+description = "Observation tool service: world-snapshot fact compiler (§4.2)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "jam-svc-observe"
+path = "src/main.rs"
+
+[dependencies]
+async-nats = { workspace = true }
+chrono = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+jam-nats = { path = "../jam-nats" }
+jam-trace = { path = "../jam-trace" }
+
+[lints]
+workspace = true

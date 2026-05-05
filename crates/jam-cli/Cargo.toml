@@ -1,0 +1,21 @@
+[package]
+name = "jam-cli"
+description = "The user-facing `jam` CLI binary."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "jam"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+jam-setup = { path = "../jam-setup" }
+jam-trace = { path = "../jam-trace" }
+
+[lints]
+workspace = true

@@ -6,6 +6,8 @@ members = [
     "crates/jam-events",
     "crates/jam-journal",
     "crates/jam-nats",
+    "crates/jam-setup",
+    "crates/jam-cli",
 ]
 
 [workspace.package]

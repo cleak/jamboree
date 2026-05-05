@@ -1,0 +1,484 @@
+# events.toml — single source of truth for event shapes (§4.4.3, dec-events-toml-manifest).
+#
+# Per `principle-journal-is-sacred-no-compaction`:
+#   Old event types stay forever; new code emits new types; both readable.
+#
+# Rules:
+#   - Additive (new optional field): bump per-event `version`. Old consumers
+#     ignore unknown fields. Serde `default` handles missing fields when
+#     reading old events with new code.
+#   - Breaking (removing field, changing semantics): introduce a new event
+#     type (e.g. `picker.spawned.v2`). Old type stays in journal forever;
+#     new code emits new type. Reconciler reads both.
+#
+# Type vocabulary:
+#   string, u32, u64, f64, bool, datetime, trace_id (ULID),
+#   path (PathBuf-equivalent string), duration_ms (u64).
+#
+# Codegen (tools/events-codegen.py — pending) produces:
+#   - crates/jam-events/src/generated/types.rs       (Rust structs + serde)
+#   - crates/jam-events/src/generated/schemas/*.json (JSON Schema)
+#   - maestro/src/jam_maestro/events/_generated.py   (Pydantic models)
+
+schema_version = 1
+
+
+# ─── Picker lifecycle ──────────────────────────────────────────────────
+
+[events."picker.spawned"]
+version = 1
+description = "Emitted by jam-svc-session after a Picker process is launched (§24.3 step 10)."
+fields = [
+    { name = "task_id",          type = "string",   required = true  },
+    { name = "harness",          type = "string",   required = true  },
+    { name = "session_id",       type = "string",   required = true  },
+    { name = "worktree_path",    type = "path",     required = true  },
+    { name = "spawned_at",       type = "datetime", required = true  },
+    { name = "picker_pid",       type = "u32",      required = false },
+    { name = "picker_trace_id",  type = "trace_id", required = true  },
+    { name = "maestro_trace_id", type = "trace_id", required = true  },
+    { name = "sandbox_backend",  type = "string",   required = true  },
+    { name = "sandbox_profile",  type = "string",   required = true  },
+    { name = "task_class",       type = "string",   required = true  },
+]
+
+[events."picker.first-output"]
+version = 1
+description = "First non-empty stdout/stderr line from a Picker — used by task-lifecycle-handler to mark first-progress."
+fields = [
+    { name = "session_id", type = "string",   required = true },
+    { name = "task_id",    type = "string",   required = true },
+    { name = "ts",         type = "datetime", required = true },
+]
+
+[events."picker.exited"]
+version = 1
+description = "Picker process exited normally (zero or non-zero, but not killed)."
+fields = [
+    { name = "session_id", type = "string",   required = true },
+    { name = "task_id",    type = "string",   required = true },
+    { name = "exit_code",  type = "u32",      required = true },
+    { name = "exited_at",  type = "datetime", required = true },
+    { name = "duration_ms", type = "duration_ms", required = true },
+]
+
+[events."picker.killed"]
+version = 1
+description = "Picker terminated via full-stop (§5.7) — SIGTERM 2s grace then SIGKILL."
+fields = [
+    { name = "session_id",    type = "string",   required = true  },
+    { name = "task_id",       type = "string",   required = true  },
+    { name = "reason",        type = "string",   required = true  },
+    { name = "killed_at",     type = "datetime", required = true  },
+    { name = "diff_snapshot", type = "string",   required = false },
+    { name = "from",          type = "string",   required = true  },  # "human:<user-id>" | "maestro:<session-id>" | "supervisor"
+]
+
+[events."picker.errored"]
+version = 1
+description = "Picker raised an internal error before exit — Maestro wakes on this."
+fields = [
+    { name = "session_id", type = "string",   required = true },
+    { name = "task_id",    type = "string",   required = true },
+    { name = "error_kind", type = "string",   required = true },
+    { name = "detail",     type = "string",   required = true },
+    { name = "ts",         type = "datetime", required = true },
+]
+
+[events."picker.idle"]
+version = 1
+description = "Picker reached prompt-waiting state with no queued message — Maestro may decide to wake."
+fields = [
+    { name = "session_id", type = "string",   required = true },
+    { name = "task_id",    type = "string",   required = true },
+    { name = "ts",         type = "datetime", required = true },
+]
+
+[events."picker.stalled"]
+version = 1
+description = "stall-detector escalation (§4.4.6): token-idle, tool-loop, or no-progress."
+fields = [
+    { name = "session_id",    type = "string",   required = true },
+    { name = "task_id",       type = "string",   required = true },
+    { name = "stall_kind",    type = "string",   required = true },  # "token-idle" | "tool-loop" | "no-progress"
+    { name = "stall_secs",    type = "u32",      required = true },
+    { name = "detected_at",   type = "datetime", required = true },
+]
+
+
+# ─── Task lifecycle (high-level, derived from Picker events) ──────────
+
+[events."task.requested"]
+version = 1
+description = "Emitted by jam CLI when caleb runs `jam task spawn` — opens the root trace."
+fields = [
+    { name = "task_id",      type = "string", required = true },
+    { name = "description",  type = "string", required = true },
+    { name = "project",      type = "string", required = true },
+    { name = "task_class",   type = "string", required = true },
+    { name = "priority",     type = "string", required = true },  # "low" | "normal" | "high"
+    { name = "requested_by", type = "string", required = true },  # "human:<user-id>"
+]
+
+[events."task.abandoned"]
+version = 1
+description = "Task explicitly abandoned (purge-session called or all retries exhausted)."
+fields = [
+    { name = "task_id",      type = "string",   required = true },
+    { name = "reason",       type = "string",   required = true },
+    { name = "abandoned_at", type = "datetime", required = true },
+]
+
+
+# ─── PR / CI events ────────────────────────────────────────────────────
+
+[events."pr.opened"]
+version = 1
+description = "Picker opened a PR via `open-pr` tool or `gh pr create` from the worktree."
+fields = [
+    { name = "task_id",     type = "string",   required = true },
+    { name = "pr_ref",      type = "string",   required = true },  # e.g. "owner/repo#123"
+    { name = "branch",      type = "string",   required = true },
+    { name = "title",       type = "string",   required = true },
+    { name = "draft",       type = "bool",     required = true },
+    { name = "opened_at",   type = "datetime", required = true },
+]
+
+[events."pr.review-received"]
+version = 1
+description = "pr-status-poller observed a new review comment (CodeRabbit, codex-review, human reviewer)."
+fields = [
+    { name = "pr_ref",       type = "string",   required = true },
+    { name = "task_id",      type = "string",   required = true },
+    { name = "reviewer",     type = "string",   required = true },
+    { name = "artifact_count", type = "u32",    required = true },
+    { name = "received_at",  type = "datetime", required = true },
+]
+
+[events."pr.ci.status-changed"]
+version = 1
+description = "CI status flipped on a PR (running -> success/failure/cancelled)."
+fields = [
+    { name = "pr_ref",     type = "string",   required = true },
+    { name = "task_id",    type = "string",   required = true },
+    { name = "ci_status",  type = "string",   required = true },  # "running" | "success" | "failure" | "cancelled"
+    { name = "changed_at", type = "datetime", required = true },
+]
+
+[events."pr.merged"]
+version = 1
+description = "PR merged via GitHub UI (the only merge path — see principle-no-auto-merge)."
+fields = [
+    { name = "pr_ref",      type = "string",   required = true },
+    { name = "task_id",     type = "string",   required = true },
+    { name = "merged_sha",  type = "string",   required = true },
+    { name = "merged_by",   type = "string",   required = true },
+    { name = "merged_at",   type = "datetime", required = true },
+    { name = "touched_paths", type = "string", required = false },  # JSON array as string for now; codegen may upgrade to Vec<path>
+]
+
+
+# ─── Maestro events ────────────────────────────────────────────────────
+
+[events."maestro.session-started"]
+version = 1
+description = "Maestro wake handler opened a new session."
+fields = [
+    { name = "session_id",   type = "string",   required = true },
+    { name = "wake_source",  type = "string",   required = true },  # "bus-event" | "user-input" | "tick" | "stall-escalation"
+    { name = "wake_subject", type = "string",   required = false },
+    { name = "started_at",   type = "datetime", required = true },
+]
+
+[events."maestro.session-ended"]
+version = 1
+description = "Maestro session closed (done | budget-exceeded | interrupted | fatal)."
+fields = [
+    { name = "session_id",       type = "string",      required = true  },
+    { name = "outcome",          type = "string",      required = true  },  # "done" | "budget-soft" | "budget-hard" | "interrupted" | "fatal"
+    { name = "duration_ms",      type = "duration_ms", required = true  },
+    { name = "input_tokens",     type = "u64",         required = true  },
+    { name = "output_tokens",    type = "u64",         required = true  },
+    { name = "cost_usd",         type = "f64",         required = true  },
+    { name = "tool_calls_count", type = "u32",         required = true  },
+    { name = "ended_at",         type = "datetime",    required = true  },
+]
+
+[events."maestro.tool-call"]
+version = 1
+description = "Maestro invoked a tool service via NATS request-reply (every call is journaled)."
+fields = [
+    { name = "session_id",  type = "string",      required = true },
+    { name = "tool_name",   type = "string",      required = true },
+    { name = "duration_ms", type = "duration_ms", required = true },
+    { name = "success",     type = "bool",        required = true },
+    { name = "error_kind",  type = "string",      required = false },
+    { name = "ts",          type = "datetime",    required = true },
+]
+
+[events."maestro.budget.soft-exceeded"]
+version = 1
+description = "Per-session budget hit 100% — Maestro finishes current turn, aborts next unless extended (§4.1.4)."
+fields = [
+    { name = "session_id", type = "string",   required = true },
+    { name = "spent_usd",  type = "f64",      required = true },
+    { name = "budget_usd", type = "f64",      required = true },
+    { name = "ts",         type = "datetime", required = true },
+]
+
+[events."maestro.budget.hard-exceeded"]
+version = 1
+description = "Per-session budget hit 125% — hard-abort, dump partial state, ntfy human."
+fields = [
+    { name = "session_id",  type = "string",   required = true },
+    { name = "spent_usd",   type = "f64",      required = true },
+    { name = "budget_usd",  type = "f64",      required = true },
+    { name = "dump_path",   type = "path",     required = true },
+    { name = "ts",          type = "datetime", required = true },
+]
+
+[events."maestro.budget.daily-exceeded"]
+version = 1
+description = "Daily budget 100% — auto-pause-dispatch, ntfy urgently."
+fields = [
+    { name = "spent_usd",  type = "f64",      required = true },
+    { name = "budget_usd", type = "f64",      required = true },
+    { name = "ts",         type = "datetime", required = true },
+]
+
+
+# ─── Quota events ──────────────────────────────────────────────────────
+
+[events."quota.exhausted"]
+version = 1
+description = "A harness's window is exhausted (Codex 5h window full, Claude rate-limit hit, API budget cap)."
+fields = [
+    { name = "harness",      type = "string",   required = true },
+    { name = "window_kind",  type = "string",   required = true },  # "local-messages" | "cloud-tasks" | "code-reviews" | "rate-limit" | "api-budget"
+    { name = "resets_at",    type = "datetime", required = false }, # null for API budget without reset
+    { name = "detected_at",  type = "datetime", required = true },
+]
+
+[events."quota.exhausted-soon"]
+version = 1
+description = "Predictive: within 10% of exhaustion — Maestro can pre-emptively reroute."
+fields = [
+    { name = "harness",     type = "string",   required = true },
+    { name = "window_kind", type = "string",   required = true },
+    { name = "remaining",   type = "f64",      required = true },  # fraction 0.0-1.0
+    { name = "ts",          type = "datetime", required = true },
+]
+
+[events."quota.refilled"]
+version = 1
+description = "5h window reset / API budget topped up / rate-limit cleared."
+fields = [
+    { name = "harness",     type = "string",   required = true },
+    { name = "window_kind", type = "string",   required = true },
+    { name = "ts",          type = "datetime", required = true },
+]
+
+
+# ─── Patch agent events ────────────────────────────────────────────────
+
+[events."patch.staged"]
+version = 1
+description = "New binary present in ~/.jam/staging/ — patch-agent will pick this up."
+fields = [
+    { name = "service",       type = "string",   required = true },
+    { name = "version",       type = "string",   required = true },
+    { name = "staging_path",  type = "path",     required = true },
+    { name = "binary_sha256", type = "string",   required = true },
+    { name = "ts",            type = "datetime", required = true },
+]
+
+[events."patch.applied"]
+version = 1
+description = "Atomic-swap complete — manifest now points at new version (§20.3)."
+fields = [
+    { name = "service",         type = "string",   required = true },
+    { name = "from_version",    type = "string",   required = true },
+    { name = "to_version",      type = "string",   required = true },
+    { name = "subject_prefix",  type = "string",   required = true },
+    { name = "ts",              type = "datetime", required = true },
+]
+
+[events."patch.confirmed"]
+version = 1
+description = "Post-patch deterministic health checks all passed."
+fields = [
+    { name = "service",   type = "string",   required = true },
+    { name = "version",   type = "string",   required = true },
+    { name = "checks_run", type = "u32",     required = true },
+    { name = "ts",        type = "datetime", required = true },
+]
+
+[events."patch.rolled-back"]
+version = 1
+description = "Mechanical rollback — manifest reverted to previous version."
+fields = [
+    { name = "service",       type = "string",   required = true },
+    { name = "from_version",  type = "string",   required = true },
+    { name = "to_version",    type = "string",   required = true },
+    { name = "reason",        type = "string",   required = true },
+    { name = "ts",            type = "datetime", required = true },
+]
+
+[events."patch.rolled-back-successfully"]
+version = 1
+description = "Rollback resolved the issue — health checks pass post-rollback."
+fields = [
+    { name = "service", type = "string",   required = true },
+    { name = "version", type = "string",   required = true },
+    { name = "ts",      type = "datetime", required = true },
+]
+
+[events."patch.failed"]
+version = 1
+description = "Patch agent could not recover — incident dump written, ntfy critical."
+fields = [
+    { name = "service",      type = "string",   required = true },
+    { name = "incident_id",  type = "string",   required = true },
+    { name = "summary",      type = "string",   required = true },
+    { name = "incident_dir", type = "path",     required = true },
+    { name = "ts",           type = "datetime", required = true },
+]
+
+[events."patch.lock-acquired"]
+version = 1
+description = "Patch agent acquired the NATS KV patch-lock (TTL 5min)."
+fields = [
+    { name = "ts", type = "datetime", required = true },
+]
+
+[events."patch.lock-released"]
+version = 1
+description = "Patch agent released the lock."
+fields = [
+    { name = "ts", type = "datetime", required = true },
+]
+
+
+# ─── Tempyr events ─────────────────────────────────────────────────────
+
+[events."tempyr.node-changed"]
+version = 1
+description = "Tempyr's file watcher detected a node edit on disk."
+fields = [
+    { name = "node_id", type = "string",   required = true },
+    { name = "path",    type = "path",     required = true },
+    { name = "ts",      type = "datetime", required = true },
+]
+
+[events."tempyr.write-permanently-failed"]
+version = 1
+description = "Retry exhausted on a Tempyr write — needs human (§4.6.4)."
+fields = [
+    { name = "node_id",    type = "string",   required = true },
+    { name = "operation",  type = "string",   required = true },
+    { name = "last_error", type = "string",   required = true },
+    { name = "attempts",   type = "u32",      required = true },
+    { name = "ts",         type = "datetime", required = true },
+]
+
+[events."tempyr.update-candidate"]
+version = 1
+description = "tempyr-pr-reconciler or Maestro flagged a Tempyr node as possibly stale."
+fields = [
+    { name = "node_id", type = "string",   required = true },
+    { name = "source",  type = "string",   required = true },  # "auto" | "maestro" | "human"
+    { name = "reason",  type = "string",   required = true },
+    { name = "ts",      type = "datetime", required = true },
+]
+
+[events."tempyr.journal-flushed"]
+version = 1
+description = "tempyr journal flush published one or more sessions to refs/tempyr/journals/archive/*."
+fields = [
+    { name = "session_count", type = "u32",      required = true },
+    { name = "ts",            type = "datetime", required = true },
+]
+
+
+# ─── Skill evolution events ────────────────────────────────────────────
+
+[events."evolve.skill-promoted"]
+version = 1
+description = "Human accepted a skill evolution candidate via git commit."
+fields = [
+    { name = "skill_path", type = "path",     required = true },
+    { name = "ts",         type = "datetime", required = true },
+]
+
+[events."evolve.skill-rejected"]
+version = 1
+description = "Human rejected a skill evolution candidate."
+fields = [
+    { name = "skill_path",     type = "path",     required = true },
+    { name = "candidate_path", type = "path",     required = true },
+    { name = "ts",             type = "datetime", required = true },
+]
+
+[events."evolve.skill-under-suspicion"]
+version = 1
+description = "skill-suspicion-reconciler observed >=3 dead_end entries in 7d for a skill (§7.4)."
+fields = [
+    { name = "skill_scope",        type = "string",   required = true },
+    { name = "dead_end_count",     type = "u32",      required = true },
+    { name = "since_days",         type = "u32",      required = true },
+    { name = "implicating_traces", type = "string",   required = false },  # JSON array stringified
+    { name = "ts",                 type = "datetime", required = true },
+]
+
+
+# ─── Substrate health / reconciler events ──────────────────────────────
+
+[events."branch.trunk-moved"]
+version = 1
+description = "trunk-fetcher observed origin/<trunk> moved (§4.4.6)."
+fields = [
+    { name = "project",    type = "string",   required = true },
+    { name = "old_sha",    type = "string",   required = true },
+    { name = "new_sha",    type = "string",   required = true },
+    { name = "fetched_at", type = "datetime", required = true },
+]
+
+[events."branch.staleness-updated"]
+version = 1
+description = "trunk-fetcher recomputed per-worktree staleness."
+fields = [
+    { name = "task_id",        type = "string",   required = true },
+    { name = "commits_behind", type = "u32",      required = true },
+    { name = "commits_ahead",  type = "u32",      required = true },
+    { name = "ts",             type = "datetime", required = true },
+]
+
+[events."clock.unsynced"]
+version = 1
+description = "clock-watcher detected NTP drift > 1s."
+fields = [
+    { name = "drift_ms", type = "u64",      required = true },
+    { name = "ts",       type = "datetime", required = true },
+]
+
+[events."harness.version-changed"]
+version = 1
+description = "harness-version-watcher detected drift between installed binary and lockfile."
+fields = [
+    { name = "harness",     type = "string",   required = true },
+    { name = "expected",    type = "string",   required = true },
+    { name = "installed",   type = "string",   required = true },
+    { name = "detected_at", type = "datetime", required = true },
+]
+
+
+# ─── Setup / meta events ───────────────────────────────────────────────
+
+[events."setup.completed"]
+version = 1
+description = "jam setup completed successfully — written to NATS KV setup-result bucket too (§11.4)."
+fields = [
+    { name = "checks_passed", type = "u32",      required = true },
+    { name = "checks_total",  type = "u32",      required = true },
+    { name = "ts",            type = "datetime", required = true },
+]

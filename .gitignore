@@ -36,7 +36,7 @@ scratch/
 *.tmp
 /tmp/
 
-# If implementation ever lands here (it shouldn't — see CLAUDE.md), don't track build output
+# Build output (Rust workspace + Python + UI per dec-monorepo)
 target/
 node_modules/
 __pycache__/

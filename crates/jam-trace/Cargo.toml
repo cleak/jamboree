@@ -1,0 +1,20 @@
+[package]
+name = "jam-trace"
+description = "Trace ID propagation for the Jamboree orchestrator (§2.13, §23)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+ulid = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

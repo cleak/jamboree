@@ -4,6 +4,7 @@ members = [
     "crates/jam-trace",
     "crates/jam-secrets",
     "crates/jam-events",
+    "crates/jam-journal",
 ]
 
 [workspace.package]
@@ -37,6 +38,7 @@ chrono = { version = "0.4", features = ["serde"] }
 secrecy = { version = "0.10", features = ["serde"] }
 thiserror = "2.0"
 toml = "0.8"
+regex = "1.11"
 
 [profile.release]
 lto = "thin"

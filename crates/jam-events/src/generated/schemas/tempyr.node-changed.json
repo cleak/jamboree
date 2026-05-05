@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:tempyr.node-changed",
+  "title": "tempyr.node-changed",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "node_id": {
+      "type": "string"
+    },
+    "path": {
+      "type": "string"
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "Tempyr's file watcher detected a node edit on disk.",
+  "required": [
+    "node_id",
+    "path",
+    "ts"
+  ]
+}

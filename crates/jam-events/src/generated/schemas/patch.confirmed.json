@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:patch.confirmed",
+  "title": "patch.confirmed",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "service": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string"
+    },
+    "checks_run": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "Post-patch deterministic health checks all passed.",
+  "required": [
+    "service",
+    "version",
+    "checks_run",
+    "ts"
+  ]
+}

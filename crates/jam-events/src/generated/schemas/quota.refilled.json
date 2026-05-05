@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:quota.refilled",
+  "title": "quota.refilled",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "harness": {
+      "type": "string"
+    },
+    "window_kind": {
+      "type": "string"
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "5h window reset / API budget topped up / rate-limit cleared.",
+  "required": [
+    "harness",
+    "window_kind",
+    "ts"
+  ]
+}

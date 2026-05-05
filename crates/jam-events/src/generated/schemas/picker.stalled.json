@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:picker.stalled",
+  "title": "picker.stalled",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "session_id": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "stall_kind": {
+      "type": "string"
+    },
+    "stall_secs": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "detected_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "stall-detector escalation (\u00a74.4.6): token-idle, tool-loop, or no-progress.",
+  "required": [
+    "session_id",
+    "task_id",
+    "stall_kind",
+    "stall_secs",
+    "detected_at"
+  ]
+}

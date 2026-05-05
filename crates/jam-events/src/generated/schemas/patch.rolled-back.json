@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:patch.rolled-back",
+  "title": "patch.rolled-back",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "service": {
+      "type": "string"
+    },
+    "from_version": {
+      "type": "string"
+    },
+    "to_version": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "Mechanical rollback \u2014 manifest reverted to previous version.",
+  "required": [
+    "service",
+    "from_version",
+    "to_version",
+    "reason",
+    "ts"
+  ]
+}

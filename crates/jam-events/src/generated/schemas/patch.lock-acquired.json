@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:patch.lock-acquired",
+  "title": "patch.lock-acquired",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "Patch agent acquired the NATS KV patch-lock (TTL 5min).",
+  "required": [
+    "ts"
+  ]
+}

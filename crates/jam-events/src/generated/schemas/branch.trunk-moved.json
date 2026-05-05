@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:branch.trunk-moved",
+  "title": "branch.trunk-moved",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "project": {
+      "type": "string"
+    },
+    "old_sha": {
+      "type": "string"
+    },
+    "new_sha": {
+      "type": "string"
+    },
+    "fetched_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "trunk-fetcher observed origin/<trunk> moved (\u00a74.4.6).",
+  "required": [
+    "project",
+    "old_sha",
+    "new_sha",
+    "fetched_at"
+  ]
+}

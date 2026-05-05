@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:picker.killed",
+  "title": "picker.killed",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "session_id": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "killed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "diff_snapshot": {
+      "type": "string"
+    },
+    "from": {
+      "type": "string"
+    }
+  },
+  "description": "Picker terminated via full-stop (\u00a75.7) \u2014 SIGTERM 2s grace then SIGKILL.",
+  "required": [
+    "session_id",
+    "task_id",
+    "reason",
+    "killed_at",
+    "from"
+  ]
+}

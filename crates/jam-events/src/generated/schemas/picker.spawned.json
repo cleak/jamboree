@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:picker.spawned",
+  "title": "picker.spawned",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "task_id": {
+      "type": "string"
+    },
+    "harness": {
+      "type": "string"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "worktree_path": {
+      "type": "string"
+    },
+    "spawned_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "picker_pid": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "picker_trace_id": {
+      "type": "string",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "maestro_trace_id": {
+      "type": "string",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "sandbox_backend": {
+      "type": "string"
+    },
+    "sandbox_profile": {
+      "type": "string"
+    },
+    "task_class": {
+      "type": "string"
+    }
+  },
+  "description": "Emitted by jam-svc-session after a Picker process is launched (\u00a724.3 step 10).",
+  "required": [
+    "task_id",
+    "harness",
+    "session_id",
+    "worktree_path",
+    "spawned_at",
+    "picker_trace_id",
+    "maestro_trace_id",
+    "sandbox_backend",
+    "sandbox_profile",
+    "task_class"
+  ]
+}

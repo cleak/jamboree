@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:patch.staged",
+  "title": "patch.staged",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "service": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string"
+    },
+    "staging_path": {
+      "type": "string"
+    },
+    "binary_sha256": {
+      "type": "string"
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "New binary present in ~/.jam/staging/ \u2014 patch-agent will pick this up.",
+  "required": [
+    "service",
+    "version",
+    "staging_path",
+    "binary_sha256",
+    "ts"
+  ]
+}

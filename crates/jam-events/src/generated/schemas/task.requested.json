@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:task.requested",
+  "title": "task.requested",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "task_id": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "project": {
+      "type": "string"
+    },
+    "task_class": {
+      "type": "string"
+    },
+    "priority": {
+      "type": "string"
+    },
+    "requested_by": {
+      "type": "string"
+    }
+  },
+  "description": "Emitted by jam CLI when caleb runs `jam task spawn` \u2014 opens the root trace.",
+  "required": [
+    "task_id",
+    "description",
+    "project",
+    "task_class",
+    "priority",
+    "requested_by"
+  ]
+}

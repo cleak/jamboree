@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:evolve.skill-rejected",
+  "title": "evolve.skill-rejected",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "skill_path": {
+      "type": "string"
+    },
+    "candidate_path": {
+      "type": "string"
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "Human rejected a skill evolution candidate.",
+  "required": [
+    "skill_path",
+    "candidate_path",
+    "ts"
+  ]
+}

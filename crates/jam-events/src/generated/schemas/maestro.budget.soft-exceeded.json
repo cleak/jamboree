@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:maestro.budget.soft-exceeded",
+  "title": "maestro.budget.soft-exceeded",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "session_id": {
+      "type": "string"
+    },
+    "spent_usd": {
+      "type": "number"
+    },
+    "budget_usd": {
+      "type": "number"
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "Per-session budget hit 100% \u2014 Maestro finishes current turn, aborts next unless extended (\u00a74.1.4).",
+  "required": [
+    "session_id",
+    "spent_usd",
+    "budget_usd",
+    "ts"
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:maestro.budget.hard-exceeded",
+  "title": "maestro.budget.hard-exceeded",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "session_id": {
+      "type": "string"
+    },
+    "spent_usd": {
+      "type": "number"
+    },
+    "budget_usd": {
+      "type": "number"
+    },
+    "dump_path": {
+      "type": "string"
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "Per-session budget hit 125% \u2014 hard-abort, dump partial state, ntfy human.",
+  "required": [
+    "session_id",
+    "spent_usd",
+    "budget_usd",
+    "dump_path",
+    "ts"
+  ]
+}

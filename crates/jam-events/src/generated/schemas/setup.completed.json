@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:setup.completed",
+  "title": "setup.completed",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "checks_passed": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "checks_total": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "jam setup completed successfully \u2014 written to NATS KV setup-result bucket too (\u00a711.4).",
+  "required": [
+    "checks_passed",
+    "checks_total",
+    "ts"
+  ]
+}

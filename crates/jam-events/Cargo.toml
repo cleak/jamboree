@@ -12,6 +12,7 @@ rust-version.workspace = true
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
+jam-trace = { path = "../jam-trace" }
 
 [lints]
 workspace = true

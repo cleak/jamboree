@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:maestro.budget.daily-exceeded",
+  "title": "maestro.budget.daily-exceeded",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "spent_usd": {
+      "type": "number"
+    },
+    "budget_usd": {
+      "type": "number"
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "Daily budget 100% \u2014 auto-pause-dispatch, ntfy urgently.",
+  "required": [
+    "spent_usd",
+    "budget_usd",
+    "ts"
+  ]
+}

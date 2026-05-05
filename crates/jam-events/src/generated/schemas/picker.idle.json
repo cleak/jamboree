@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:picker.idle",
+  "title": "picker.idle",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "session_id": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "Picker reached prompt-waiting state with no queued message \u2014 Maestro may decide to wake.",
+  "required": [
+    "session_id",
+    "task_id",
+    "ts"
+  ]
+}

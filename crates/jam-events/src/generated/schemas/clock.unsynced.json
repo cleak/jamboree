@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:clock.unsynced",
+  "title": "clock.unsynced",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "drift_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "clock-watcher detected NTP drift > 1s.",
+  "required": [
+    "drift_ms",
+    "ts"
+  ]
+}

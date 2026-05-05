@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:patch.rolled-back-successfully",
+  "title": "patch.rolled-back-successfully",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "service": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string"
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "Rollback resolved the issue \u2014 health checks pass post-rollback.",
+  "required": [
+    "service",
+    "version",
+    "ts"
+  ]
+}

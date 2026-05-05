@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:patch.failed",
+  "title": "patch.failed",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "service": {
+      "type": "string"
+    },
+    "incident_id": {
+      "type": "string"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "incident_dir": {
+      "type": "string"
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "Patch agent could not recover \u2014 incident dump written, ntfy critical.",
+  "required": [
+    "service",
+    "incident_id",
+    "summary",
+    "incident_dir",
+    "ts"
+  ]
+}

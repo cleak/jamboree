@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:tempyr.update-candidate",
+  "title": "tempyr.update-candidate",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "node_id": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "tempyr-pr-reconciler or Maestro flagged a Tempyr node as possibly stale.",
+  "required": [
+    "node_id",
+    "source",
+    "reason",
+    "ts"
+  ]
+}

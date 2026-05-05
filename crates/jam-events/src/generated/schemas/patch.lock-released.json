@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:patch.lock-released",
+  "title": "patch.lock-released",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "Patch agent released the lock.",
+  "required": [
+    "ts"
+  ]
+}

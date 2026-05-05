@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:patch.applied",
+  "title": "patch.applied",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "service": {
+      "type": "string"
+    },
+    "from_version": {
+      "type": "string"
+    },
+    "to_version": {
+      "type": "string"
+    },
+    "subject_prefix": {
+      "type": "string"
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "Atomic-swap complete \u2014 manifest now points at new version (\u00a720.3).",
+  "required": [
+    "service",
+    "from_version",
+    "to_version",
+    "subject_prefix",
+    "ts"
+  ]
+}

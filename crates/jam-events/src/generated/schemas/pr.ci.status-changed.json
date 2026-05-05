@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:pr.ci.status-changed",
+  "title": "pr.ci.status-changed",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "pr_ref": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "ci_status": {
+      "type": "string"
+    },
+    "changed_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "CI status flipped on a PR (running -> success/failure/cancelled).",
+  "required": [
+    "pr_ref",
+    "task_id",
+    "ci_status",
+    "changed_at"
+  ]
+}

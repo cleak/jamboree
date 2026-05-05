@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:evolve.skill-under-suspicion",
+  "title": "evolve.skill-under-suspicion",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "skill_scope": {
+      "type": "string"
+    },
+    "dead_end_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "since_days": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "implicating_traces": {
+      "type": "string"
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "skill-suspicion-reconciler observed >=3 dead_end entries in 7d for a skill (\u00a77.4).",
+  "required": [
+    "skill_scope",
+    "dead_end_count",
+    "since_days",
+    "ts"
+  ]
+}

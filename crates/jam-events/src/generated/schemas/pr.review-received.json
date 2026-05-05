@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:pr.review-received",
+  "title": "pr.review-received",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "pr_ref": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "reviewer": {
+      "type": "string"
+    },
+    "artifact_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "received_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "pr-status-poller observed a new review comment (CodeRabbit, codex-review, human reviewer).",
+  "required": [
+    "pr_ref",
+    "task_id",
+    "reviewer",
+    "artifact_count",
+    "received_at"
+  ]
+}

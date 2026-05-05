@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:maestro.session-started",
+  "title": "maestro.session-started",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "session_id": {
+      "type": "string"
+    },
+    "wake_source": {
+      "type": "string"
+    },
+    "wake_subject": {
+      "type": "string"
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "Maestro wake handler opened a new session.",
+  "required": [
+    "session_id",
+    "wake_source",
+    "started_at"
+  ]
+}

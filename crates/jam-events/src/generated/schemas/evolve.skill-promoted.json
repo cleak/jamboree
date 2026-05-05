@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:evolve.skill-promoted",
+  "title": "evolve.skill-promoted",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "skill_path": {
+      "type": "string"
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "Human accepted a skill evolution candidate via git commit.",
+  "required": [
+    "skill_path",
+    "ts"
+  ]
+}

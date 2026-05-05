@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:tempyr.write-permanently-failed",
+  "title": "tempyr.write-permanently-failed",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "node_id": {
+      "type": "string"
+    },
+    "operation": {
+      "type": "string"
+    },
+    "last_error": {
+      "type": "string"
+    },
+    "attempts": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "Retry exhausted on a Tempyr write \u2014 needs human (\u00a74.6.4).",
+  "required": [
+    "node_id",
+    "operation",
+    "last_error",
+    "attempts",
+    "ts"
+  ]
+}

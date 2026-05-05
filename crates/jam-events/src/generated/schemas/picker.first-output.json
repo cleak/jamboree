@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:picker.first-output",
+  "title": "picker.first-output",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "session_id": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "First non-empty stdout/stderr line from a Picker \u2014 used by task-lifecycle-handler to mark first-progress.",
+  "required": [
+    "session_id",
+    "task_id",
+    "ts"
+  ]
+}

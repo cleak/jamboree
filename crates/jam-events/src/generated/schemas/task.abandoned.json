@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:task.abandoned",
+  "title": "task.abandoned",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "task_id": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "abandoned_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "Task explicitly abandoned (purge-session called or all retries exhausted).",
+  "required": [
+    "task_id",
+    "reason",
+    "abandoned_at"
+  ]
+}

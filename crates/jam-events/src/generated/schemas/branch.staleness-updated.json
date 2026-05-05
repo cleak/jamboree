@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:branch.staleness-updated",
+  "title": "branch.staleness-updated",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "task_id": {
+      "type": "string"
+    },
+    "commits_behind": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "commits_ahead": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "trunk-fetcher recomputed per-worktree staleness.",
+  "required": [
+    "task_id",
+    "commits_behind",
+    "commits_ahead",
+    "ts"
+  ]
+}

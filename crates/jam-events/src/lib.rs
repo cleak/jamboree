@@ -98,13 +98,8 @@ impl<P> EventEnvelope<P> {
     }
 }
 
-/// Generated per-event types and JSON schemas.
-///
-/// Populated by `tools/events-codegen.py` from `events.toml`. Empty in
-/// Phase 0; codegen lands in `task-events-codegen-pipeline`.
-pub mod generated {
-    // Intentionally empty until codegen runs.
-}
+pub mod generated;
+pub use generated::Event;
 
 #[cfg(test)]
 mod tests {
@@ -157,5 +152,48 @@ mod tests {
             .with_parent_trace("01PARENT");
         let json = serde_json::to_string(&envelope).unwrap();
         assert!(json.contains("\"parent_trace_id\":\"01PARENT\""));
+    }
+
+    #[test]
+    fn generated_event_has_expected_constants() {
+        // Smoke test: codegen produced a `picker.spawned` struct with the right
+        // EVENT_TYPE / EVENT_SUBTYPE_VERSION constants. If this breaks, the
+        // codegen is producing the wrong shape.
+        use crate::generated::PickerSpawned;
+        assert_eq!(PickerSpawned::EVENT_TYPE, "picker.spawned");
+        assert_eq!(PickerSpawned::EVENT_SUBTYPE_VERSION, 1);
+    }
+
+    #[test]
+    fn generated_event_round_trips_through_envelope() {
+        use crate::generated::{Event, TaskRequested};
+        use chrono::Utc;
+
+        let payload = TaskRequested {
+            task_id: "2026-05-04-test-task".into(),
+            description: "test description".into(),
+            project: "blueberry".into(),
+            task_class: "light-edit".into(),
+            priority: "normal".into(),
+            requested_by: "human:caleb".into(),
+        };
+
+        let envelope = EventEnvelope::new(
+            TaskRequested::EVENT_TYPE,
+            TaskRequested::EVENT_SUBTYPE_VERSION,
+            1,
+            "01HXKJVF7P4N6X5R8SRZWB6JCM",
+            "human:caleb",
+            payload,
+        );
+
+        let json = serde_json::to_string(&envelope).unwrap();
+        let parsed: EventEnvelope<TaskRequested> = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.event_type, "task.requested");
+        assert_eq!(parsed.payload.project, "blueberry");
+        assert_eq!(parsed.payload.priority, "normal");
+        // Generated structs survive a full envelope round-trip without losing fields.
+        let _ = Utc::now(); // chrono is used; keep the import live.
     }
 }

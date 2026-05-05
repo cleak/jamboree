@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:harness.version-changed",
+  "title": "harness.version-changed",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "harness": {
+      "type": "string"
+    },
+    "expected": {
+      "type": "string"
+    },
+    "installed": {
+      "type": "string"
+    },
+    "detected_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "harness-version-watcher detected drift between installed binary and lockfile.",
+  "required": [
+    "harness",
+    "expected",
+    "installed",
+    "detected_at"
+  ]
+}

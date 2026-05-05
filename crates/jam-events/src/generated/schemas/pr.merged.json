@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:pr.merged",
+  "title": "pr.merged",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "pr_ref": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "merged_sha": {
+      "type": "string"
+    },
+    "merged_by": {
+      "type": "string"
+    },
+    "merged_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "touched_paths": {
+      "type": "string"
+    }
+  },
+  "description": "PR merged via GitHub UI (the only merge path \u2014 see principle-no-auto-merge).",
+  "required": [
+    "pr_ref",
+    "task_id",
+    "merged_sha",
+    "merged_by",
+    "merged_at"
+  ]
+}

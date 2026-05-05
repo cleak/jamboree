@@ -228,6 +228,7 @@ name = "jam-events"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "jam-trace",
  "serde",
  "serde_json",
 ]

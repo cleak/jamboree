@@ -58,13 +58,13 @@ What this model does **not** defend against:
 ├── .password-store/                            mode 700   caleb:caleb        (caleb's personal pass — separate from maestro's)
 ├── .config/                                    mode 700   caleb:caleb
 ├── .jam/                                       mode 750   caleb:caleb        (caleb's CLI client config; preferences, UI tokens)
-└── code/                                       mode 755   caleb:caleb        (Caleb's project workspace)
-    ├── blueberry/                              mode 755   caleb:caleb        (PRISTINE — maestro never writes here)
-    ├── blueberry-tempyr-live/                  mode 2770  caleb:maestro     (canonical Tempyr worktree, shared)
-    │   ├── tempyr/nodes/                       mode 2770                     (caleb writes; maestro reads)
-    │   ├── tempyr/specs/                       mode 2770                     (caleb writes; maestro reads)
-    │   └── tempyr/tasks/                       mode 2770                     (maestro writes; caleb reads)
-    └── jam-skills/                            mode 2770  caleb:maestro     (skills git repo, shared)
+├── blueberry/                                  mode 755   caleb:caleb        (PRISTINE — maestro never writes here)
+├── blueberry-jam/                              mode 2770  caleb:maestro     (canonical Tempyr worktree for Jamboree)
+│   ├── graph/nodes/                            mode 2770                     (caleb writes; maestro reads)
+│   ├── graph/specs/                            mode 2770                     (caleb writes; maestro reads)
+│   └── graph/tasks/                            mode 2770                     (maestro writes; caleb reads)
+└── jamboree/                                   mode 755   caleb:caleb        (the Jamboree monorepo — orchestrator source-of-truth)
+    └── skills/                                 mode 2770  caleb:maestro     (skills tree — shared write per dec-skills-in-monorepo-v1)
 
 /home/maestro/                                 mode 750   maestro:maestro
 ├── .gnupg/                                     mode 700   maestro:maestro  (maestro's GPG keyring)
@@ -92,9 +92,9 @@ What this model does **not** defend against:
 
 **Key permission decisions:**
 
-- `/home/caleb` is `751` rather than `750`. This lets `maestro` traverse to known shared subdirs (e.g., `~caleb/code/blueberry-tempyr-live/`) without being able to enumerate the rest of caleb's home. `.ssh`, `.gnupg`, and `.password-store` remain `700` so the contents are still protected.
+- `/home/caleb` is `751` rather than `750`. This lets `maestro` traverse to known shared subdirs (e.g., `/home/caleb/blueberry-jam/`, `/home/caleb/jamboree/skills/`) without being able to enumerate the rest of caleb's home. `.ssh`, `.gnupg`, and `.password-store` remain `700` so the contents are still protected.
 
-- Shared dirs use group `maestro` with mode `2770`. The leading `2` is the **setgid** bit: new files created in these directories inherit the directory's group, so caleb-created files in `tempyr/nodes/` are still group-readable by maestro without manual `chgrp`. Both `caleb` (as owner) and `maestro` (as group) have full rwx; others have nothing.
+- Shared dirs use group `maestro` with mode `2770`. The leading `2` is the **setgid** bit: new files created in these directories inherit the directory's group, so caleb-created files in `graph/nodes/` are still group-readable by maestro without manual `chgrp`. Both `caleb` (as owner) and `maestro` (as group) have full rwx; others have nothing.
 
 - Per-Picker worktrees are `700`. Even though all Pickers share UID `picker`, the worktree directory permissions prevent one Picker from reading another's mid-task state. Combined with sandbox `cwd` enforcement, this is "soft per-Picker isolation" without requiring per-task user creation.
 
@@ -355,21 +355,23 @@ Or via the UI, which renders these for you.
 
 ### 6.4 Editing skills
 
-Skills live in the shared dir at `~caleb/code/jam-skills/`, owned `caleb:maestro` mode `2770`. Caleb edits them as caleb in his normal editor:
+Skills live inside the Jamboree monorepo at `/home/caleb/jamboree/skills/`, owned `caleb:maestro` mode `2770` (per `dec-skills-in-monorepo-v1`). Caleb edits them as caleb in his normal editor:
 
 ```bash
-cd ~/code/jam-skills
+cd /home/caleb/jamboree/skills/
 nvim projects/blueberry/hot-paths.md
 git add . && git commit -m "Update hot-path guidance"
 ```
 
-The orchestrator's inotify watcher (running as maestro) fires; the Maestro invalidates the skill cache; next session reads the updated content. No restart, no reload command.
+Skills are version-controlled with the rest of the orchestrator monorepo. The orchestrator's inotify watcher (running as maestro) fires on edits; the Maestro invalidates the skill cache; next session reads the updated content. No restart, no reload command.
+
+The Maestro reads skills directly (no symlink, no sync) — paths configured in `/home/maestro/.jam/config/skills.toml` per `dec-skills-direct-read-with-config`.
 
 ### 6.5 Editing Tempyr nodes
 
-Same pattern, in `~caleb/code/blueberry-tempyr-live/tempyr/nodes/`. Setgid ensures any new file caleb creates is group-readable by maestro.
+Same pattern, in `/home/caleb/blueberry-jam/graph/nodes/` (Blueberry uses `graph/` rather than `tempyr/` per its `.tempyr/config.toml`). Setgid ensures any new file caleb creates is group-readable by maestro.
 
-`tempyr/tasks/` files are written by the orchestrator (maestro); caleb can read them but should not write them. They're journal-derived and would be overwritten anyway.
+`graph/tasks/` files are written by the orchestrator (maestro); caleb can read them but should not write them. They're journal-derived and would be overwritten anyway.
 
 ### 6.6 Inspecting a stuck Picker
 
@@ -409,19 +411,24 @@ The v5 directory layout assumes `~/.jam/` resolves to caleb's home. With the mul
 | `~/.jam/journal/` | `/home/maestro/.jam/journal/` |
 | `~/.jam/session-store.db` | `/home/maestro/.jam/session-store.db` |
 | `~/.jam/research/` | `/home/maestro/.jam/research/` |
-| `~/.jam/skills/` | `/home/caleb/code/jam-skills/` (shared) |
+| `~/.jam/skills/` | `/home/caleb/jamboree/skills/` (in monorepo, shared, mode 2770 caleb:maestro) |
 | `~/.jam/worktrees/` | `/home/picker/workers/` |
 
 Implementation: define `JAM_HOME` env var that defaults to `/home/maestro/.jam` when running as maestro; resolves to `~/.jam` when running as caleb (for CLI). Tools and services use `JAM_HOME` everywhere instead of hardcoded `~/`.
 
-For the skills repo path specifically, add a config:
+For skills, the Maestro reads directly from configured paths (no symlink, no sync) per `dec-skills-direct-read-with-config`. Config at `/home/maestro/.jam/config/skills.toml`:
 
 ```toml
 # /home/maestro/.jam/config/skills.toml
-skills-repo = "/home/caleb/code/jam-skills"
+[skills]
+folders = ["/home/caleb/jamboree/skills/"]
+files = [
+    "/home/caleb/blueberry/CLAUDE.md",
+    "/home/caleb/blueberry/AGENTS.md",
+]
 ```
 
-The Maestro reads this; the inotify watcher uses this path; CLI tools that read skills use this path.
+The Maestro reads `folders` recursively for `*.md` files (matched against `scope:` front-matter) and reads `files` directly. The inotify watcher uses the same paths. CLI tools that read skills use this same config.
 
 ### 7.2 Picker spawn (§4.5.1, §24.3)
 
@@ -528,7 +535,7 @@ The UI server runs as `maestro`. UI session tokens still attribute actions to a 
 
 ### 7.7 inotify watchers (§21.4)
 
-Watchers run as `maestro`. For watchers on shared dirs (`~caleb/code/jam-skills/`, `~caleb/code/blueberry-tempyr-live/`), maestro must have read access via group membership. The directory permissions (mode 2770, group maestro) make this work; just verify in setup that maestro can in fact read these paths.
+Watchers run as `maestro`. For watchers on shared dirs (`/home/caleb/jamboree/skills/`, `/home/caleb/blueberry-jam/`), maestro must have read access via group membership. The directory permissions (mode 2770, group maestro) make this work; just verify in setup that maestro can in fact read these paths.
 
 ---
 
@@ -565,16 +572,19 @@ sudo chown -R picker:picker /home/picker/workers/
 sudo chmod 750 /home/picker/workers
 sudo chmod 700 /home/picker/workers/*
 
-# Move skills to shared location:
-mv ~/.jam/skills ~/code/jam-skills
-sudo chown -R caleb:maestro ~/code/jam-skills
-sudo chmod -R 2770 ~/code/jam-skills
+# Move skills into the Jamboree monorepo (per dec-skills-in-monorepo-v1):
+mv ~/.jam/skills /home/caleb/jamboree/skills
+sudo chown -R caleb:maestro /home/caleb/jamboree/skills
+sudo chmod -R 2770 /home/caleb/jamboree/skills
+sudo find /home/caleb/jamboree/skills -type d -exec chmod 2770 {} \;
 
-# Move canonical Tempyr worktree group ownership:
-sudo chown -R caleb:maestro ~/code/blueberry-tempyr-live
-sudo chmod -R 2770 ~/code/blueberry-tempyr-live
+# Rename / fix canonical Tempyr worktree (per dec-blueberry-jam-path):
+# (If you previously had ~/code/blueberry-tempyr-live, move it now.)
+# sudo mv ~/code/blueberry-tempyr-live /home/caleb/blueberry-jam
+sudo chown -R caleb:maestro /home/caleb/blueberry-jam
+sudo chmod -R 2770 /home/caleb/blueberry-jam
 # Re-do setgid on dirs (chmod -R won't set the bit reliably):
-sudo find ~/code/blueberry-tempyr-live -type d -exec chmod 2770 {} \;
+sudo find /home/caleb/blueberry-jam -type d -exec chmod 2770 {} \;
 ```
 
 ### 8.4 Re-encrypt secrets to maestro's GPG key
@@ -633,7 +643,7 @@ Fix: ensure `/etc/sudoers.d/jam-users` is mode 440 owned root:root, runs through
 
 ### 9.3 "maestro cannot read the canonical Tempyr worktree"
 
-Symptoms: the orchestrator can't write to `tempyr/tasks/`; the Tempyr MCP server can't read nodes.
+Symptoms: the orchestrator can't write to `graph/tasks/`; the Tempyr MCP server can't read nodes.
 
 Causes:
 
@@ -644,13 +654,13 @@ Causes:
 Fix:
 
 ```bash
-sudo chown -R caleb:maestro ~/code/blueberry-tempyr-live
-sudo find ~/code/blueberry-tempyr-live -type d -exec chmod 2770 {} \;
-sudo find ~/code/blueberry-tempyr-live -type f -exec chmod 660 {} \;
+sudo chown -R caleb:maestro /home/caleb/blueberry-jam
+sudo find /home/caleb/blueberry-jam -type d -exec chmod 2770 {} \;
+sudo find /home/caleb/blueberry-jam -type f -exec chmod 660 {} \;
 sudo chmod 751 /home/caleb
 ```
 
-Then test: `sudo -u maestro ls ~/code/blueberry-tempyr-live/tempyr/tasks/`.
+Then test: `sudo -u maestro ls /home/caleb/blueberry-jam/graph/tasks/`.
 
 ### 9.4 "Secrets work for caleb but fail for maestro"
 

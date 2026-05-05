@@ -65,7 +65,7 @@ Six structural shifts, each addressing a real concern that surfaced in v4 review
 
 1. **Tool services moved out-of-process.** v4 had `jam-tools-*` as in-process Rust crates linked into one binary. v5 makes each tool service its own process, communicating over NATS request-reply. Why: hot-patching. We need to upgrade the search router or the observation layer without restarting the Maestro or reconciling with running Pickers. In-process linkage forces system-wide restarts; out-of-process atomic-swap doesn't. (§4.3, §20)
 
-2. **Tempyr canonical worktree pattern.** Task state files live in a dedicated long-lived worktree (`~/code/blueberry-tempyr-live/`) — separate from main checkout (which stays pristine) and from per-task Picker worktrees (which are ephemeral). The orchestrator owns the canonical worktree; humans own the main checkout. Why: avoids dirtying the pristine reference, keeps cross-session task visibility, enables single-writer discipline. (§4.6, §22)
+2. **Tempyr canonical worktree pattern.** Task state files live in a dedicated long-lived worktree (`/home/caleb/blueberry-jam/`) — separate from main checkout (which stays pristine) and from per-task Picker worktrees (which are ephemeral). The orchestrator owns the canonical worktree; humans own the main checkout. Why: avoids dirtying the pristine reference, keeps cross-session task visibility, enables single-writer discipline. (§4.6, §22)
 
 3. **Patch agent + atomic-upgrade infrastructure.** A small recovery agent that babysits hot-patches; runs deterministic health checks first, escalates to LLM diagnosis only on failure. Why: hot-patching without supervision creates silent breakage. Failed recoveries that auto-rollback are recoverable; failures that hang are not. (§20)
 
@@ -499,7 +499,7 @@ If routing manifest changes mid-call (atomic-swap during execution), the in-flig
 #### 4.1.6 Tempyr journal integration for Maestro sessions
 
 The Maestro uses Tempyr's journal for its own reasoning trail. Per-(worktree, agent) session scoping means:
-- **Worktree:** the canonical Tempyr worktree (`~/code/blueberry-tempyr-live/` for Blueberry).
+- **Worktree:** the canonical Tempyr worktree (`/home/caleb/blueberry-jam/` for Blueberry).
 - **Agent:** `maestro:<maestro-session-id>`.
 
 Each Maestro wake opens a fresh Tempyr session (because the agent identifier is unique per wake). The session closes when the wake ends — either via an `outcome` entry with `final = true`, or via `tempyr journal finalize` invoked by the Maestro's session-close cleanup. After finalization, `tempyr journal flush` runs in the background to publish the session as a git ref.
@@ -1052,7 +1052,7 @@ Caleb's existing file-based knowledge graph. MCP server, Rust core, YAML/markdow
 #### 4.6.1 Three-checkout geography
 
 ```
-~/code/blueberry/                       # Main checkout
+/home/caleb/blueberry/                   # Main checkout
                                         #   Pristine reference. Humans use for
                                         #   builds/IDE/inspection. Orchestrator
                                         #   never writes here.
@@ -1062,18 +1062,20 @@ Caleb's existing file-based knowledge graph. MCP server, Rust core, YAML/markdow
                                         #   Killed worktrees preserved with marker.
                                         #   Each Picker journals here via Tempyr.
 
-~/code/blueberry-tempyr-live/           # Canonical Tempyr worktree
+/home/caleb/blueberry-jam/               # Canonical Tempyr worktree
                                         #   Orchestrator-owned. Long-lived branch.
-                                        #   tempyr/nodes/   ← human-edited (committed)
-                                        #   tempyr/specs/   ← human-edited (committed)
-                                        #   tempyr/tasks/   ← orchestrator-edited
+                                        #   For Blueberry the in-repo graph dir is `graph/`
+                                        #   (per Blueberry's CLAUDE.md), not `tempyr/`:
+                                        #   graph/nodes/    ← human-edited (committed)
+                                        #   graph/specs/    ← human-edited (committed)
+                                        #   graph/tasks/    ← orchestrator-edited
                                         #                     (UNCOMMITTED, journal-derived)
                                         #
                                         #   Tempyr MCP server reads from here.
                                         #   Maestro's reasoning journal anchors here.
 ```
 
-The discipline: the task-lifecycle-handler writes only to `tempyr/tasks/`. Humans write only to `tempyr/nodes/` and `tempyr/specs/`. Path-scoped ownership means no concurrent-write conflicts even though they share a worktree. Humans commit and push their edits normally; the orchestrator's task files stay uncommitted forever (or get committed in periodic batches if you want a durable history of task lifecycle in git, but it's optional).
+The discipline: the task-lifecycle-handler writes only to `<graph-dir>/tasks/`. Humans write only to `<graph-dir>/nodes/` and `<graph-dir>/specs/`. The graph-dir name is project-specific — `graph/` for Blueberry per its `.tempyr/config.toml`, conventionally `tempyr/` if a project hasn't customized. Path-scoped ownership means no concurrent-write conflicts even though they share a worktree. Humans commit and push their edits normally; the orchestrator's task files stay uncommitted forever (or get committed in periodic batches if you want a durable history of task lifecycle in git, but it's optional).
 
 If the canonical worktree ever gets corrupted: kill it, `git worktree remove`, recreate, replay journal to rebuild `tempyr/tasks/`. Maybe ten minutes of downtime; no data loss because the journal is the source of truth.
 
@@ -1083,9 +1085,10 @@ Config:
 # ~/.jam/config/projects/blueberry.toml
 trunk-branch = "main"
 fetch-staleness-secs = 60
-canonical-worktree = "~/code/blueberry-tempyr-live"
+canonical-worktree = "/home/caleb/blueberry-jam"
 canonical-branch = "tempyr-live"
-task-state-relpath = "tempyr/tasks"
+graph-relpath = "graph"                # Blueberry uses graph/ per its .tempyr/config.toml
+task-state-relpath = "graph/tasks"     # = graph-relpath + "/tasks"
 task-state-commit-policy = "never"  # never | periodic | per-task-completion
 ```
 
@@ -1770,7 +1773,7 @@ If `git fetch` fails (network issue, GitHub rate limit), don't fall back to loca
 The canonical Tempyr worktree (§4.6.1) is created **once at orchestrator install time**, lives forever, and never goes through the spawn-time worktree-create protocol. The setup script:
 
 ```bash
-git -C ~/code/blueberry worktree add ~/code/blueberry-tempyr-live tempyr-live
+git -C /home/caleb/blueberry worktree add /home/caleb/blueberry-jam tempyr-live
 ```
 
 If the canonical worktree gets corrupted (rare), recovery is `jam tempyr canonical-worktree recreate`, which:
@@ -3430,7 +3433,7 @@ Adaptive polling: `pr-status-poller` cadence drops to 5min for PRs with no recen
 The skills directory and Tempyr's source files use inotify watchers:
 
 - **Skills watcher.** `~/.jam/skills/` watched recursively; on change, emit `skills.changed{file_path}`. Maestro invalidates skill cache for affected scope.
-- **Tempyr file watcher.** Tempyr's MCP server runs its own watcher on `~/code/<project>-tempyr-live/tempyr/nodes/` and `tempyr/specs/`. The orchestrator subscribes to Tempyr's `node-changed` events.
+- **Tempyr file watcher.** Tempyr's MCP server runs its own watcher on the canonical worktree's `<graph-dir>/nodes/` and `<graph-dir>/specs/` (e.g. `/home/caleb/blueberry-jam/graph/nodes/` for Blueberry). The orchestrator subscribes to Tempyr's `node-changed` events.
 
 inotify limits enforced at setup (`fs.inotify.max_user_watches >= 524288`).
 
@@ -3486,7 +3489,7 @@ Two patterns based on actor:
 - One Tempyr session per Picker process lifetime.
 
 **Maestro anchors at the canonical Tempyr worktree.**
-- `worktree`: `~/code/blueberry-tempyr-live/`.
+- `worktree`: `/home/caleb/blueberry-jam/`.
 - `agent`: `maestro:<maestro-session-id>` (e.g., `maestro:maestro-2026-05-02-08-15-22`).
 - One Tempyr session per Maestro wake.
 
@@ -4053,7 +4056,7 @@ await tempyr_journal_log(
 )
 ```
 
-This entry lands in Tempyr's journal anchored at `~/code/blueberry-tempyr-live/`, agent `maestro:maestro-2026-05-02-08-15-22`.
+This entry lands in Tempyr's journal anchored at `/home/caleb/blueberry-jam/`, agent `maestro:maestro-2026-05-02-08-15-22`.
 
 Maestro calls `spawn-picker`:
 
@@ -4226,7 +4229,7 @@ tags:
   - parent-trace:01HXKJVF7P4N6X5R8SRZWB6JCM
 ```
 
-The harness adapter periodically emits `picker.first-output`, lifecycle status updates. The orchestrator's task-lifecycle-handler updates `~/code/blueberry-tempyr-live/tempyr/tasks/2026-05-02-canyon-spline-refactor.yaml`:
+The harness adapter periodically emits `picker.first-output`, lifecycle status updates. The orchestrator's task-lifecycle-handler updates `/home/caleb/blueberry-jam/graph/tasks/2026-05-02-canyon-spline-refactor.yaml`:
 
 ```yaml
 type: task
@@ -4348,7 +4351,7 @@ The `skills.changed` inotify event fires; Maestro's skill cache invalidates the 
 - `~/.jam/journal/2026-05-03/journal.maestro.jsonl` — second Maestro session (recording learning).
 - `refs/tempyr/journals/archive/2026/05/02/<id>` — git ref for the Picker's flushed Tempyr session.
 - `refs/tempyr/journals/archive/2026/05/02/<id>` — git ref for the Maestro's flushed Tempyr session.
-- `~/code/blueberry-tempyr-live/tempyr/tasks/2026-05-02-canyon-spline-refactor.yaml` — final task node, status=merged.
+- `/home/caleb/blueberry-jam/graph/tasks/2026-05-02-canyon-spline-refactor.yaml` — final task node, status=merged.
 - `~/.jam/skills/projects/blueberry/coderabbit-extraction-suggestions.md` — new skill file.
 - `~/.jam/session-store.db` — derived view of the session for FTS5 queries.
 - `~/.jam/tempyr-update-queue.jsonl` — entries for Tempyr nodes possibly affected by the merge.

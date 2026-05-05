@@ -1,0 +1,56 @@
+# Pre-commit hooks for the Jamboree monorepo.
+#
+# Install once:
+#     pip install --user pre-commit
+#     pre-commit install
+#
+# Run manually:
+#     pre-commit run --all-files
+#
+# Per spec §11.2.7 + comp-pre-commit-hooks. Hooks are intentionally narrow
+# right now — we add Python (ruff/pyright/bandit/pip-audit) when the Maestro
+# package lands in Phase 1, and gitleaks at the system level when the project
+# moves to a CI pipeline that runs it on every push.
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: check-merge-conflict
+      - id: detect-private-key
+
+  # Cargo formatting / linting via local cargo invocation. Requires the rust
+  # toolchain pinned in rust-toolchain.toml (1.94+).
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt --check
+        entry: cargo fmt --all -- --check
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-clippy
+        name: cargo clippy --workspace --all-targets -- -D warnings
+        entry: cargo clippy --workspace --all-targets -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      # Verify the events.toml manifest stays in sync with its generated Rust
+      # types and JSON schemas. Runs only when one of the relevant files
+      # changes; cheap (~50ms) so the narrow scope is just for clarity.
+      - id: events-codegen-check
+        name: events.toml in sync with generated files
+        entry: python3 tools/events-codegen.py --check
+        language: system
+        pass_filenames: false
+        files: '^(crates/jam-events/events\.toml|crates/jam-events/src/generated/.*|tools/events-codegen\.py)$'

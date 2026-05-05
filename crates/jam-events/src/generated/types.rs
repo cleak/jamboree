@@ -4,7 +4,6 @@
 // Per `dec-events-toml-manifest` (spec §4.4.3): events.toml is the single
 // source of truth. CI verifies this file is in sync via `--check`.
 
-
 #![allow(clippy::module_name_repetitions)]
 
 use serde::{Deserialize, Serialize};

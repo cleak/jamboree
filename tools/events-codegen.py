@@ -165,36 +165,39 @@ def load_manifest() -> tuple[int, list[Event]]:
 
 
 def generate_rust(schema_version: int, events: list[Event]) -> str:
-    lines: list[str] = [GENERATED_HEADER]
-    lines.append("")
-    lines.append("#![allow(clippy::module_name_repetitions)]")
-    lines.append("")
-    lines.append("use serde::{Deserialize, Serialize};")
-    lines.append("")
-    lines.append(f"/// Manifest schema version (from events.toml).")
-    lines.append(f"pub const MANIFEST_SCHEMA_VERSION: u32 = {schema_version};")
-    lines.append("")
-    lines.append("/// Common shape implemented by every generated event payload.")
-    lines.append("///")
-    lines.append("/// Provides compile-time access to the event type identifier and")
-    lines.append("/// `event_subtype_version` so call sites cannot accidentally use the wrong")
-    lines.append("/// version when constructing an envelope.")
-    lines.append("pub trait Event: Serialize + serde::de::DeserializeOwned {")
-    lines.append("    /// Kebab-case dotted event type (e.g. `\"picker.spawned\"`).")
-    lines.append("    const EVENT_TYPE: &'static str;")
-    lines.append("    /// Per-event-type version, bumped on additive changes only.")
-    lines.append("    const EVENT_SUBTYPE_VERSION: u32;")
-    lines.append("}")
-    lines.append("")
+    # Build a list of single-line strings (no trailing newlines).
+    # `"\n".join(...) + "\n"` at the bottom produces fmt-clean output:
+    # exactly one trailing newline, single blank line between sections.
+    out: list[str] = list(GENERATED_HEADER.rstrip().splitlines())
+    out.append("")
+    out.append("#![allow(clippy::module_name_repetitions)]")
+    out.append("")
+    out.append("use serde::{Deserialize, Serialize};")
+    out.append("")
+    out.append("/// Manifest schema version (from events.toml).")
+    out.append(f"pub const MANIFEST_SCHEMA_VERSION: u32 = {schema_version};")
+    out.append("")
+    out.append("/// Common shape implemented by every generated event payload.")
+    out.append("///")
+    out.append("/// Provides compile-time access to the event type identifier and")
+    out.append("/// `event_subtype_version` so call sites cannot accidentally use the wrong")
+    out.append("/// version when constructing an envelope.")
+    out.append("pub trait Event: Serialize + serde::de::DeserializeOwned {")
+    out.append('    /// Kebab-case dotted event type (e.g. `"picker.spawned"`).')
+    out.append("    const EVENT_TYPE: &'static str;")
+    out.append("    /// Per-event-type version, bumped on additive changes only.")
+    out.append("    const EVENT_SUBTYPE_VERSION: u32;")
+    out.append("}")
 
     for event in events:
-        lines.extend(_generate_struct(event))
-        lines.append("")
+        out.append("")
+        out.extend(_generate_struct(event))
 
-    return "\n".join(lines).rstrip() + "\n"
+    return "\n".join(out) + "\n"
 
 
 def _generate_struct(event: Event) -> list[str]:
+    """Render struct + impl. Caller is responsible for blank-line separators."""
     out: list[str] = []
     if event.description:
         out.append(f"/// {event.description}")

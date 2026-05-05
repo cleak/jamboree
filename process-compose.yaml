@@ -1,0 +1,230 @@
+# process-compose.yaml — orchestrator service supervisor (spec §4.4.8).
+#
+# Run via:
+#     sudo -u maestro process-compose -f /home/caleb/jamboree/process-compose.yaml
+#
+# Services that don't exist yet are commented out with `disabled: true`. As
+# crates land in Phase 0/1, uncomment them or change `disabled: true` to
+# `disabled: false`.
+#
+# Per security-setup.md §7.4: each service runs as user `maestro` (or
+# `picker` for spawned Pickers); process-compose itself is launched via
+# `sudo -u maestro` from `caleb`'s session. The `user:` field requires
+# process-compose to be running as a user that can transition; the simplest
+# path is to launch the whole compose as `maestro` directly.
+
+version: "0.5"
+
+# Default work-dir for all services; individual services can override.
+environment:
+  - JAM_HOME=/home/maestro/.jam
+
+processes:
+  # ─── Substrate ──────────────────────────────────────────────────────
+
+  nats:
+    description: "NATS JetStream bus — single-node, loopback-only, token auth."
+    command: |
+      /opt/jam/bin/nats-server \
+        --jetstream \
+        --store_dir /home/maestro/.jam/nats-data \
+        --addr 127.0.0.1 \
+        --port 4222 \
+        --auth_required false
+    # TODO: switch to token auth via `--auth jam/nats/token` value once jam-cli
+    # learns to read from pass and inject; see oq-cli-sudo-vs-duplicate-nats-token.
+    availability:
+      restart: on_failure
+      backoff_seconds: 2
+    readiness_probe:
+      exec:
+        command: "/opt/jam/bin/nats-server --signal status"
+      initial_delay_seconds: 1
+      period_seconds: 5
+      timeout_seconds: 2
+      failure_threshold: 3
+
+  # ─── Substrate-side daemons (Phase 0+) ──────────────────────────────
+
+  jam-nats-bridge:
+    description: "Subscribes to journal.* and writes JSONL via jam-journal."
+    command: "/opt/jam/bin/jam-nats-bridge"
+    depends_on:
+      nats:
+        condition: process_healthy
+    availability:
+      restart: on_failure
+      backoff_seconds: 2
+    disabled: true # until the binary lands (Phase 0 #3)
+
+  # ─── Tool services (Phase 1+) ───────────────────────────────────────
+
+  jam-svc-observe:
+    description: "Observation tool service — world-snapshot, compute-readiness."
+    command: "/opt/jam/bin/jam-svc-observe"
+    depends_on:
+      nats:
+        condition: process_healthy
+    availability:
+      restart: on_failure
+      backoff_seconds: 2
+    disabled: true # until the binary lands (Phase 0 #4 / Phase 1)
+
+  jam-svc-session:
+    description: "Session tool service — spawn-picker, lifecycle."
+    command: "/opt/jam/bin/jam-svc-session"
+    depends_on:
+      nats:
+        condition: process_healthy
+    availability:
+      restart: on_failure
+    disabled: true
+
+  jam-svc-worktree:
+    description: "Worktree creation protocol (§6.9)."
+    command: "/opt/jam/bin/jam-svc-worktree"
+    depends_on:
+      nats:
+        condition: process_healthy
+    disabled: true
+
+  jam-svc-repo:
+    description: "Repo / PR ops via GitHub App (§4.7.1)."
+    command: "/opt/jam/bin/jam-svc-repo"
+    depends_on:
+      nats:
+        condition: process_healthy
+    disabled: true
+
+  jam-svc-knowledge:
+    description: "Tempyr / session-store / skills loader."
+    command: "/opt/jam/bin/jam-svc-knowledge"
+    depends_on:
+      nats:
+        condition: process_healthy
+    disabled: true
+
+  jam-svc-search:
+    description: "Search router (Brave default, more on demand)."
+    command: "/opt/jam/bin/jam-svc-search"
+    depends_on:
+      nats:
+        condition: process_healthy
+    disabled: true
+
+  jam-svc-research:
+    description: "Tiered deep research (Tavily/Sonar/Exa-Deep)."
+    command: "/opt/jam/bin/jam-svc-research"
+    depends_on:
+      nats:
+        condition: process_healthy
+    disabled: true
+
+  jam-svc-message:
+    description: "Three message modes (queue/interrupt/full-stop)."
+    command: "/opt/jam/bin/jam-svc-message"
+    depends_on:
+      nats:
+        condition: process_healthy
+    disabled: true
+
+  jam-svc-supervise:
+    description: "Notify-human, pause-dispatch, process-group control."
+    command: "/opt/jam/bin/jam-svc-supervise"
+    depends_on:
+      nats:
+        condition: process_healthy
+    disabled: true
+
+  jam-svc-evolve:
+    description: "Skill evolution coordinator (Hermes DSPy+GEPA wrapper)."
+    command: "/opt/jam/bin/jam-svc-evolve"
+    depends_on:
+      nats:
+        condition: process_healthy
+    disabled: true
+
+  # ─── Reconcilers (Phase 1+) ─────────────────────────────────────────
+
+  stall-detector:
+    command: "/opt/jam/bin/jam-stall-detector"
+    depends_on:
+      nats:
+        condition: process_healthy
+    disabled: true
+
+  task-lifecycle-handler:
+    command: "/opt/jam/bin/jam-task-lifecycle"
+    depends_on:
+      nats:
+        condition: process_healthy
+    disabled: true
+
+  trunk-fetcher:
+    command: "/opt/jam/bin/jam-trunk-fetcher"
+    disabled: true
+
+  pr-status-poller:
+    command: "/opt/jam/bin/jam-pr-poller"
+    depends_on:
+      nats:
+        condition: process_healthy
+    disabled: true
+
+  clock-watcher:
+    command: "/opt/jam/bin/jam-clock-watcher"
+    depends_on:
+      nats:
+        condition: process_healthy
+    disabled: true
+
+  harness-version-watcher:
+    command: "/opt/jam/bin/jam-harness-watcher"
+    depends_on:
+      nats:
+        condition: process_healthy
+    disabled: true
+
+  skill-suspicion-reconciler:
+    command: "/opt/jam/bin/jam-skill-suspicion"
+    depends_on:
+      nats:
+        condition: process_healthy
+    disabled: true
+
+  tempyr-pr-reconciler:
+    command: "/opt/jam/bin/jam-tempyr-pr-reconciler"
+    depends_on:
+      nats:
+        condition: process_healthy
+    disabled: true
+
+  # ─── Patch agent (Phase 7) ──────────────────────────────────────────
+
+  patch-agent:
+    description: "Hot-patch supervisor with deterministic-then-LLM recovery (§20.5)."
+    command: "/opt/jam/bin/jam-patch-agent"
+    depends_on:
+      nats:
+        condition: process_healthy
+    disabled: true
+
+  # ─── Maestro + UI (Phase 1, Phase 6) ────────────────────────────────
+
+  maestro:
+    description: "The Maestro — Python episodic LLM orchestrator (§4.1)."
+    command: "uv run --directory /opt/jam/maestro python -m jam_maestro"
+    depends_on:
+      nats:
+        condition: process_healthy
+      jam-svc-observe:
+        condition: process_started
+    disabled: true
+
+  ui-server:
+    description: "axum + WebSocket bridge to NATS; SolidJS SPA (§4.11)."
+    command: "/opt/jam/bin/jam-ui-server"
+    depends_on:
+      nats:
+        condition: process_healthy
+    disabled: true

@@ -1,0 +1,22 @@
+tempyr_version = "0.1.0"
+managed_artifacts = [
+    "hooks",
+    "skill",
+    "agent",
+]
+
+[[files]]
+path = ".claude/settings.json"
+strategy = "merge"
+written_hash = "2fa37ca3a73d7728a430ab727fd64c695aa42f334ea41b6f799daa269c196985"
+tempyr_hash = "de6bea8cf2d8947585c48550109efa0a3d1ddbf45412398f176f33bd14db9358"
+
+[[files]]
+path = ".claude/skills/tempyr-interview/SKILL.md"
+strategy = "overwrite"
+written_hash = "8d4922a041ffe968aadd57bdc6ad5569fa175a803911d93fbf2e917ccc2ecedb"
+
+[[files]]
+path = ".claude/agents/tempyr-extractor.md"
+strategy = "overwrite"
+written_hash = "35db5cc33e35fe24c122fbff141e26b085b23855bcd2a62482fea0a391754a24"

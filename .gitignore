@@ -46,3 +46,6 @@ __pycache__/
 .mypy_cache/
 dist/
 build/
+
+# Tempyr local secrets
+.env.local

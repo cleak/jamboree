@@ -1,0 +1,41 @@
+[general]
+graph_dir = "graph"
+schema_path = ".tempyr/schema.toml"
+
+[embedding]
+provider = "voyage"          # voyage | gemini | local
+model = "voyage-4"
+dimensions = 1024
+# API key: set VOYAGE_API_KEY in Tempyr's shared worktree env, .env.local, or your shell environment
+
+[llm]
+provider = "anthropic"
+model = "claude-opus-4-6"
+temperature = 0.1
+
+[retrieval]
+default_token_budget = 8000
+structural_weight = 0.5
+bm25_weight = 0.25
+vector_weight = 0.25
+recency_boost_days = 7
+recency_boost_value = 0.1
+
+[interview]
+max_questions_per_turn = 3
+auto_advance_phases = true
+session_timeout_hours = 168
+
+[mcp]
+transport = "stdio"
+
+[journal]
+# Capture agent reasoning (decisions, dead ends, findings) and push it
+# to refs/tempyr/journals/* on the configured remote. Set to false to
+# disable auto-publish; the `tempyr journal flush` CLI still works for
+# one-off flushes.
+enabled = true
+remote = "origin"
+tick_secs = 60                  # in-process publisher cadence inside `tempyr --mcp`
+pack_refs_every_n_pushes = 50   # 0 disables `git pack-refs --all` after pushes
+push_timeout_secs = 30

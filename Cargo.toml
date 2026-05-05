@@ -8,6 +8,7 @@ members = [
     "crates/jam-nats",
     "crates/jam-setup",
     "crates/jam-cli",
+    "crates/jam-nats-bridge",
 ]
 
 [workspace.package]

@@ -1,9 +1,9 @@
 ---
 id: task-journal-writer-with-secret-redaction
 type: task
-status: backlog
+status: done
 created: 2026-05-04T03:58:04.998794408Z
-updated: 2026-05-04T04:09:06.039836827Z
+updated: 2026-05-06T02:52:18.673980764Z
 edges:
 - target: feat-substrate-services
   type: child_of

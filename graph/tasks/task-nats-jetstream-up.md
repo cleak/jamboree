@@ -1,9 +1,9 @@
 ---
 id: task-nats-jetstream-up
 type: task
-status: backlog
+status: in_progress
 created: 2026-05-04T03:58:02.357054855Z
-updated: 2026-05-04T04:08:59.172994705Z
+updated: 2026-05-06T02:52:46.504191234Z
 edges:
 - target: feat-substrate-services
   type: child_of

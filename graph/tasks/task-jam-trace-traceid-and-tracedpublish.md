@@ -1,9 +1,9 @@
 ---
 id: task-jam-trace-traceid-and-tracedpublish
 type: task
-status: backlog
+status: done
 created: 2026-05-04T03:58:00.597181641Z
-updated: 2026-05-04T04:08:52.204594247Z
+updated: 2026-05-06T02:52:08.786295283Z
 edges:
 - target: feat-substrate-services
   type: child_of

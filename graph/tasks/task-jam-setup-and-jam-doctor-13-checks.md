@@ -1,9 +1,9 @@
 ---
 id: task-jam-setup-and-jam-doctor-13-checks
 type: task
-status: backlog
+status: done
 created: 2026-05-04T03:58:07.596350375Z
-updated: 2026-05-04T04:09:12.202681639Z
+updated: 2026-05-06T02:52:26.569541021Z
 edges:
 - target: feat-jam-cli
   type: child_of

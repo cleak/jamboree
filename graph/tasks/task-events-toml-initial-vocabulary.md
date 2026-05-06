@@ -1,9 +1,9 @@
 ---
 id: task-events-toml-initial-vocabulary
 type: task
-status: backlog
+status: done
 created: 2026-05-04T03:57:52.942761897Z
-updated: 2026-05-04T04:08:32.667988442Z
+updated: 2026-05-06T02:51:41.179152710Z
 edges:
 - target: feat-substrate-services
   type: child_of

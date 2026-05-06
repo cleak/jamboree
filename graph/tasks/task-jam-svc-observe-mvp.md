@@ -1,9 +1,9 @@
 ---
 id: task-jam-svc-observe-mvp
 type: task
-status: backlog
+status: in_progress
 created: 2026-05-04T03:58:15.402076152Z
-updated: 2026-05-04T04:09:34.266171054Z
+updated: 2026-05-06T02:52:54.470642185Z
 edges:
 - target: feat-observation-tool-service
   type: child_of

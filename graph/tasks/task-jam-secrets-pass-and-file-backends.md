@@ -1,9 +1,9 @@
 ---
 id: task-jam-secrets-pass-and-file-backends
 type: task
-status: backlog
+status: done
 created: 2026-05-04T03:57:58.038234992Z
-updated: 2026-05-04T04:08:45.337403634Z
+updated: 2026-05-06T02:51:58.945332121Z
 edges:
 - target: feat-substrate-services
   type: child_of

@@ -1,9 +1,9 @@
 ---
 id: task-events-codegen-pipeline
 type: task
-status: backlog
+status: done
 created: 2026-05-04T03:57:55.481906394Z
-updated: 2026-05-04T04:08:39.388441065Z
+updated: 2026-05-06T02:51:51.005272315Z
 edges:
 - target: feat-substrate-services
   type: child_of

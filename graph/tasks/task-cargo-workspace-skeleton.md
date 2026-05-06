@@ -1,9 +1,9 @@
 ---
 id: task-cargo-workspace-skeleton
 type: task
-status: backlog
+status: done
 created: 2026-05-04T03:57:50.401141428Z
-updated: 2026-05-04T04:08:25.829459804Z
+updated: 2026-05-06T02:51:31.249789046Z
 edges:
 - target: feat-substrate-services
   type: child_of

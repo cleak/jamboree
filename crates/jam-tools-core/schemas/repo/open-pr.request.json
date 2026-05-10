@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-tools:repo.open-pr.request",
+  "title": "repo.open-pr request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["task_id", "branch", "title"],
+  "properties": {
+    "task_id": { "type": "string", "minLength": 1 },
+    "branch": { "type": "string", "minLength": 1 },
+    "title": { "type": "string", "minLength": 1 },
+    "body": { "type": "string" },
+    "draft": { "type": "boolean" },
+    "base": { "type": "string", "minLength": 1 },
+    "repo": { "type": "string", "minLength": 1 },
+    "worktree_path": { "type": "string", "minLength": 1 },
+    "push": { "type": "boolean" }
+  }
+}

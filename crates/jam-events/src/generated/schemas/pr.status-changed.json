@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:pr.status-changed",
+  "title": "pr.status-changed",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "pr_ref": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "state": {
+      "type": "string"
+    },
+    "draft": {
+      "type": "boolean"
+    },
+    "changed_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "pr-status-poller observed PR state or draft status change.",
+  "required": [
+    "pr_ref",
+    "task_id",
+    "state",
+    "draft",
+    "changed_at"
+  ]
+}

@@ -1,0 +1,38 @@
+[package]
+name = "jam-pr-poller"
+description = "ETag-cached GitHub PR status poller (§4.4.6, §21.3)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "jam-pr-poller"
+path = "src/main.rs"
+
+[dependencies]
+chrono = { workspace = true }
+clap = { workspace = true }
+futures = { workspace = true }
+jam-events = { path = "../jam-events" }
+jam-nats = { path = "../jam-nats" }
+jam-secrets = { path = "../jam-secrets" }
+jam-tools-core = { path = "../jam-tools-core" }
+jam-trace = { path = "../jam-trace" }
+jsonwebtoken = { workspace = true }
+octocrab = { workspace = true }
+secrecy = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.14"
+
+[lints]
+workspace = true

@@ -1,9 +1,9 @@
 ---
 id: api-full-stop
 type: api_surface
-status: draft
+status: stable
 created: 2026-05-04T03:53:08.106800194Z
-updated: 2026-05-04T04:58:19.842440882Z
+updated: 2026-05-06T21:26:08Z
 edges:
 - target: comp-jam-svc-message
   type: exposed_by
@@ -28,3 +28,5 @@ Side effects:
 Confirmation lifecycle: `kill-requested` → `kill-confirmed` (process exited) or `picker-zombie` (grace period elapsed → SIGKILL escalation).
 
 UX intent: "this thing is doing something wrong, stop it now, I'll deal with the wreckage."
+
+Implementation note (2026-05-06): The public Maestro route is now `full-stop` → `tool.message.full-stop`, which publishes the traced kill command/status lifecycle and proxies to `tool.session.full-stop` for process termination and Tempyr cleanup.

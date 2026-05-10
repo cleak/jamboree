@@ -1,9 +1,9 @@
 ---
 id: comp-codex-cli-adapter
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:34:40.347974886Z
-updated: 2026-05-04T04:42:01.201271570Z
+updated: 2026-05-10T00:00:00Z
 edges:
 - target: comp-harness-adapter-trait
   type: depends_on
@@ -25,3 +25,14 @@ Tempyr journal integration: Codex CLI supports `SessionStart`/`SessionEnd` hook 
 Per memory: Codex OAuth is the auth mechanism for the Maestro itself too — same credential covers Codex-based Pickers.
 
 Phase 1 first-harness pick (§12, §24.9 step 8): simplest because of clean Skills/SessionStart hooks.
+
+Implementation note (2026-05-06): `jam-svc-session` now launches
+`codex-cli` Pickers through `tool.session.spawn-picker`, verifies the Codex
+harness lockfile before spawn, creates a child Picker trace, captures Codex JSON
+stdout to `.jam/codex-events.jsonl`, and publishes lifecycle / quota usage
+journal events. A temporary NATS smoke spawned a real Codex Picker against
+Blueberry and opened draft PR 383.
+
+Runtime note (2026-05-10): that smoke predates the current PR policy. Live
+Picker PRs now default to non-draft, use Picker-authored `.jam/pr-title.txt`
+and `.jam/pr-body.md`, and get a deterministic `[jam]` title prefix.

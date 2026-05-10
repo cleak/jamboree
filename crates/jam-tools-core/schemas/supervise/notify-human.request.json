@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-tools:supervise.notify-human.request",
+  "title": "supervise.notify-human request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary"],
+  "properties": {
+    "urgency": {
+      "type": "string",
+      "enum": ["low", "medium", "high", "critical"]
+    },
+    "summary": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "payload": { "type": "object", "additionalProperties": true }
+  }
+}

@@ -174,7 +174,7 @@ In order, with each step's success/failure surfaced:
 - Initialize GPG keyrings or `pass` stores. These are manual one-time steps documented in §5 below.
 - Move existing data from a single-user `~/.jam/` setup to `~maestro/.jam/`. See §8 for migration.
 - Configure NATS or any orchestrator service. That's `jam setup`'s job.
-- Install harness CLI binaries (`codex`, `claude-code`). Done by `install-cli-tools.sh` (§4.5).
+- Install harness CLI binaries (`codex`, `claude-code`, `opencode`). Done by `install-cli-tools.sh` (§4.5).
 
 ### 4.4 Failure modes
 
@@ -188,9 +188,9 @@ If you suspect partial state, run `--verify-only` for a non-destructive audit.
 
 ### 4.5 CLI tool installation (`install-cli-tools.sh`)
 
-After `bootstrap-users.sh` has created the service users, `install-cli-tools.sh` installs both harness CLIs (`@openai/codex` via npm and `@anthropic-ai/claude-code` via the official native installer) **per-user** for `caleb`, `maestro`, and `picker`, and configures a daily auto-update cron job for each. All three users get both tools so the Maestro and Pickers can be driven by either harness without a re-install.
+After `bootstrap-users.sh` has created the service users, `install-cli-tools.sh` installs the harness CLIs (`@openai/codex` via npm, `@anthropic-ai/claude-code` via the official native installer, and `opencode-ai` via npm) **per-user** for `caleb`, `maestro`, and `picker`, and configures a daily auto-update cron job for each. All three users get all three tools so the Maestro and Pickers can be driven by any live harness without a re-install.
 
-Per-user (not root) is required because both tools refuse to update — and Claude Code refuses to run at all — when their install location is root-owned. Each user's tokens land in their own home (`~/.codex/auth.json`, `~/.claude/...`) with mode 700, so the existing user-isolation boundary covers credential separation as well.
+Per-user (not root) is required because harness tools update by writing to their install location — and Claude Code refuses to run at all — when that location is root-owned. Each user's OAuth tokens land in their own home (`~/.codex/auth.json`, `~/.claude/...`) with mode 700, while the OpenCode/DeepSeek API key is injected per spawn from Jamboree's secrets path, so the existing user-isolation boundary covers credential separation as well.
 
 ```bash
 sudo ./install-cli-tools.sh                  # interactive, uses $SUDO_USER
@@ -271,6 +271,7 @@ The recommended workflow is `seed-maestro-secrets.sh` (interactive, idempotent w
 ```bash
 # As caleb, populate maestro's pass via sudo:
 sudo -u maestro -i pass insert jam/pickers/github-app-id
+sudo -u maestro -i pass insert jam/pickers/github-app-installation-id
 sudo -u maestro -i pass insert -m jam/pickers/github-app-key   # multiline for PEM key
 sudo -u maestro -i pass insert jam/notify/ntfy-token
 sudo -u maestro -i pass insert jam/nats/token
@@ -280,7 +281,7 @@ sudo -u maestro -i pass insert jam/search/brave                # default starter
 
 Each `pass insert` prompts for the value (or paste, for `-m` multiline). Keys are stored encrypted under `~maestro/.password-store/`, only decryptable with `maestro`'s GPG key.
 
-For search backends specifically, see proposal-v5.md §4.8 — the recommended initial deploy is **Brave alone**. Other providers (Exa, Firecrawl, Linkup, Perplexity, Tavily) live in the spec for forward compatibility but should not be populated up-front.
+For search backends specifically, see proposal-v5.md §4.8 — the recommended initial deploy is **Brave alone**. Other providers (Exa, Firecrawl, Linkup, Perplexity, Tavily) live in the spec for forward compatibility but should not be populated up-front. `jam-svc-search` resolves provider credentials from explicit environment variables first, then `JAM_SECRETS_FILE`, then maestro's `pass` entries (`jam/search/brave`, `jam/search/firecrawl`, `jam/search/linkup`).
 
 If the Maestro is ever switched to a non-Codex provider (Anthropic API, OpenRouter, DeepSeek-as-Maestro, etc. per §4.1), populate the corresponding key from §11.3.1 (e.g. `jam/maestro/anthropic-api-key`) and reconfigure LiteLLM. GPT-5.5 via ChatGPT Pro is the default.
 
@@ -296,6 +297,8 @@ sudo -u maestro -i pass list
 
 sudo -u maestro -i pass show jam/pickers/github-app-id
 # Should print the value.
+sudo -u maestro -i pass show jam/pickers/github-app-installation-id
+# Should print the App installation ID for Blueberry.
 
 # Verify Codex OAuth landed:
 sudo -u maestro -i ls -la /home/maestro/.codex/auth.json
@@ -310,12 +313,14 @@ Day-to-day use after the setup is complete.
 
 ### 6.1 Starting / stopping the orchestrator
 
-The orchestrator runs as `maestro`. Start it via:
+The supervisor is launched as root so process-compose can honor each service's
+`user:` directive; the long-running orchestrator services themselves run as
+`maestro`.
 
 ```bash
-sudo -u maestro -i jam start    # starts process-compose with all services
-sudo -u maestro -i jam stop
-sudo -u maestro -i jam status
+sudo /opt/jam/bin/process-compose up -f /home/caleb/jamboree/process-compose.yaml
+sudo /opt/jam/bin/process-compose down
+sudo /opt/jam/bin/process-compose list
 ```
 
 A future systemd unit (out of scope for this addendum) can wrap these as `systemctl --user start jam.service` running under maestro.
@@ -458,11 +463,17 @@ let cmd = Command::new("sudo")
         "--",
         harness_binary,
     ])
-    .current_dir(&worktree_path)
+    .current_dir("/")                               // accessible before sudo switches uid
     .env_clear()
     .envs(allowlist)
     ...;
 ```
+
+Do not set the sudo wrapper's `current_dir` to the Picker worktree. The pre-exec
+chdir is performed by the process that is still running as `maestro`, and
+`/home/picker/workers/<task-id>/` may be mode 700. Harness adapters pass the
+worktree path explicitly instead; for Codex this is the `--cd <worktree-path>`
+argument, which is handled after the process runs as `picker`.
 
 Worktree path also changes: `~/.jam/worktrees/<task-id>/` becomes `/home/picker/workers/<task-id>/`. The worktree creation protocol (§6.9 in v5) still applies; only the root path changes.
 
@@ -503,7 +514,10 @@ processes:
     # binds 127.0.0.1 + Tailscale CGNAT range per §4.11.1
 ```
 
-The `user:` directive requires process-compose to launch as root (or via `sudo`); each subprocess then runs as the declared user. For WSL: launch process-compose as root via `sudo`, or have a simple shell wrapper that calls `sudo -u maestro /opt/jam/bin/jam start`.
+The `user:` directive requires process-compose to launch as root (or via
+`sudo`); each subprocess then runs as the declared user. For WSL: launch
+process-compose as root via `sudo`, or wrap that exact command in a small
+root-owned helper.
 
 ### 7.5 Setup script (§11.4) — additional checks
 
@@ -546,8 +560,8 @@ If you've been running the orchestrator as caleb directly and now want to add th
 ### 8.1 Stop the orchestrator
 
 ```bash
-jam stop
-# Or, if no graceful stop yet implemented:
+sudo /opt/jam/bin/process-compose down
+# Or, if the supervisor is not running or cannot respond:
 pkill -u caleb -f 'jam-'
 ```
 
@@ -613,7 +627,7 @@ Edit `~maestro/.jam/config/maestro.toml`, `secrets.toml`, etc., to reflect new p
 ### 8.6 Restart and verify
 
 ```bash
-sudo -u maestro -i jam start
+sudo /opt/jam/bin/process-compose up -f /home/caleb/jamboree/process-compose.yaml
 jam doctor
 ```
 

@@ -1,9 +1,9 @@
 ---
 id: task-ui-shell-axum-and-solidjs
 type: task
-status: backlog
+status: done
 created: 2026-05-04T03:58:12.779745643Z
-updated: 2026-05-04T04:09:27.150938881Z
+updated: 2026-05-06T03:52:24.017530541Z
 edges:
 - target: feat-ui-server
   type: child_of

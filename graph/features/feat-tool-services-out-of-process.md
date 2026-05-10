@@ -1,9 +1,9 @@
 ---
 id: feat-tool-services-out-of-process
 type: feature
-status: draft
+status: active
 created: 2026-05-04T03:28:16.598357204Z
-updated: 2026-05-04T04:36:33.821032719Z
+updated: 2026-05-06T08:54:07Z
 owner: caleb
 edges:
 - target: comp-events-toml-and-codegen
@@ -54,3 +54,5 @@ Services: `jam-svc-observe`, `-session`, `-worktree`, `-repo`, `-knowledge`, `-s
 Tools exposed by each service are JSON-schema-described in `crates/jam-tools-core/schemas/<service>/<tool>.json`. Schemas drive both Rust types (`schemars`) and Pydantic types (build script). Single source of truth.
 
 Out-of-process is the prerequisite for hot-patching (§20) — atomic-swap of one service binary while the Maestro session continues.
+
+Implementation status (2026-05-06): the Phase 1 request-reply service set (`observe`, `session`, `worktree`, `repo`) implements traced NATS ping responses on both `tool.<service>.ping` and version-suffixed `tool.<service>.ping.<version>` subjects. The `jam health ping` CLI provides the 5-second verifier used by process-compose readiness probes.

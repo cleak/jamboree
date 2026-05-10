@@ -1,9 +1,9 @@
 ---
 id: comp-pass-secret-backend
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:39:40.827518605Z
-updated: 2026-05-04T05:02:16.999504762Z
+updated: 2026-05-06T21:15:00Z
 edges:
 - target: comp-jam-secrets
   type: depends_on
@@ -30,6 +30,7 @@ jam/harness/claude-pro-token
 jam/harness/codex-cli-token
 jam/pickers/deepseek-api-key
 jam/pickers/github-app-id
+jam/pickers/github-app-installation-id
 jam/pickers/github-app-key
 jam/search/brave
 jam/search/firecrawl

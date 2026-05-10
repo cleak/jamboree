@@ -24,3 +24,5 @@ The double-write makes "why does this skill exist" trace-replayable from Tempyr'
 Required fields: `scope`, `confidence`, `evidence`, `guidance`, `originated-from-trace`. Optional: `counterexample`. Skill files are markdown with structured front-matter; live in `~/.jam/skills/`; version-controlled; read by the Maestro at session start when relevant to the task scope.
 
 `originated-from-trace` lets us trace back from a skill to the failure or finding that produced it (§23).
+
+Implementation note (2026-05-06): the first Maestro-side implementation is active in `jam_maestro.record_learning`. It writes markdown skills to the configured skills root and logs the paired Tempyr decision through `TempyrJournalClient`, with bidirectional traceability via skill-file path and journal tags.

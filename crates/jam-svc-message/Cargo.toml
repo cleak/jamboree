@@ -1,0 +1,29 @@
+[package]
+name = "jam-svc-message"
+description = "Message modes tool service for Picker queue, interrupt, and full-stop."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "jam-svc-message"
+path = "src/main.rs"
+
+[dependencies]
+bytes = { workspace = true }
+chrono = { workspace = true }
+futures = { workspace = true }
+jam-nats = { path = "../jam-nats" }
+jam-trace = { path = "../jam-trace" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[lints]
+workspace = true

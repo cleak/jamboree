@@ -1,9 +1,9 @@
 ---
 id: api-orchestrator-journal-envelope
 type: api_surface
-status: draft
+status: stable
 created: 2026-05-04T03:53:51.256953276Z
-updated: 2026-05-04T04:59:23.312204312Z
+updated: 2026-05-06T21:29:02Z
 edges:
 - target: comp-orchestrator-jsonl-journal
   type: exposed_by
@@ -26,3 +26,5 @@ Fields:
 - `parent_trace_id`: optional, child traces.
 - `actor`: service name | Maestro session ID | `human:<user-id>`.
 - `payload`: event-specific shape, validated against generated JSON schema.
+
+Implementation note (2026-05-06): `jam-events::EventEnvelope` is the shared envelope type used by publishers, and `jam-nats-bridge` persists traced `journal.*` messages as rotated JSONL under the runtime journal root.

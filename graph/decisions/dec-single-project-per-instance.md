@@ -9,6 +9,8 @@ edges:
   type: depended_on_by
 - target: feat-multi-user-security-model
   type: depended_on_by
+- target: task-jam-project-add-future
+  type: blocks
 ---
 **Jamboree runs one project per instance.** Multi-project deployments = multiple Jamboree instances, each with its own substrate (NATS, journal, session-store, canonical worktree, skills repo).
 

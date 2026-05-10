@@ -1,9 +1,9 @@
 ---
 id: comp-nats-tool-rpc
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:31:34.604961662Z
-updated: 2026-05-04T04:06:10.743738202Z
+updated: 2026-05-06T21:15:00Z
 edges:
 - target: feat-tool-services-out-of-process
   type: used_by

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-tools:observe.world-snapshot.request",
+  "title": "observe.world-snapshot request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["task_id"],
+  "properties": {
+    "task_id": { "type": "string", "minLength": 1 },
+    "target": { "type": "string", "minLength": 1 },
+    "max_staleness_secs": { "type": "integer", "minimum": 0 },
+    "worktree_path": { "type": "string", "minLength": 1 }
+  }
+}

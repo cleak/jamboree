@@ -17,7 +17,7 @@ Reasons:
 - Per-installation rate limits — a noisy reviewer adapter doesn't starve other components.
 - ETag-conditional requests count against the limit only for non-304 responses.
 
-Setup is one-time: register the app, generate private key, install on repos, store key in `pass` (`jam/pickers/github-app-key`), exchange for installation tokens at startup. The `octocrab` crate handles the dance.
+Setup is one-time: register the app, generate private key, install on repos, store app id / installation id / key in `pass` (`jam/pickers/github-app-id`, `jam/pickers/github-app-installation-id`, `jam/pickers/github-app-key`), exchange for installation tokens at startup. The `octocrab` crate handles the dance.
 
 Picker secrets distribution: harness adapter exchanges App key → installation token → picker-scoped token before spawn. Token expires in 1 hour; refresh logic in adapter reissues for long-running Pickers via NATS callback.
 

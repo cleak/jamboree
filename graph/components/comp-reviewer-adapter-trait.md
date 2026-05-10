@@ -1,9 +1,9 @@
 ---
 id: comp-reviewer-adapter-trait
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:34:46.799610254Z
-updated: 2026-05-04T05:00:09.576226996Z
+updated: 2026-05-06T22:20:25Z
 edges:
 - target: api-reviewer-adapter-contract
   type: exposes
@@ -14,15 +14,15 @@ edges:
 - target: feat-reviewer-adapters
   type: used_by
 ---
-The trait for normalizing provider-specific review formats (§4.7, §19.5):
+The shared trait for normalizing provider-specific review formats (§4.7, §19.5), now defined in `crates/jam-tools-core/src/contracts.rs`:
 
 ```rust
 pub trait ReviewerAdapter: Send + Sync {
     fn id(&self) -> ReviewerId;
-    fn fetch_review(&self, pr: &PullRequestRef) -> Result<Vec<ReviewArtifact>>;
+    fn fetch_review(&self, pr: &PullRequestRef) -> ContractResult<Vec<ReviewArtifact>>;
     fn classify(&self, body: &Untrusted<String>) -> ArtifactKind;
     fn supports_reply(&self) -> bool;
-    fn reply(&self, artifact: &ReviewArtifact, text: &str) -> Result<()>;
+    fn reply(&self, artifact: &ReviewArtifact, text: &str) -> ContractResult<()>;
 }
 ```
 

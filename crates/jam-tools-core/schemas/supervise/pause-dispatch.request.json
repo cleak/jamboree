@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-tools:supervise.pause-dispatch.request",
+  "title": "supervise.pause-dispatch request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["reason"],
+  "properties": {
+    "reason": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "changed_by": { "type": "string", "minLength": 1, "maxLength": 200 }
+  }
+}

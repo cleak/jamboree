@@ -1,0 +1,4 @@
+repo = "https://github.com/NousResearch/hermes-agent-self-evolution"
+commit = "4693c8f0eed21e39f065c6f38d98d2a403a04095"
+license = "MIT"
+vendored_at = "2026-05-06"

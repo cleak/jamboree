@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# cli-tools-update.sh — Daily per-user updater for codex + claude-code.
+# cli-tools-update.sh — Daily per-user updater for codex + claude-code + opencode.
 #
 # Invoked by /etc/cron.d/jam-cli-update once a day for each Jamboree user
 # (caleb, maestro, picker). Updates whichever tools that user has installed.
@@ -71,6 +71,18 @@ if command -v claude >/dev/null 2>&1; then
     fi
 else
     log "claude-code not installed for this user — skipping"
+fi
+
+# --- opencode -----------------------------------------------------------
+if command -v opencode >/dev/null 2>&1; then
+    log "updating opencode-ai via npm"
+    if npm install -g opencode-ai >> "$LOG_FILE" 2>&1; then
+        log "opencode ok: $(opencode --version 2>&1 | head -1)"
+    else
+        log "opencode FAILED — see above"
+    fi
+else
+    log "opencode not installed for this user — skipping"
 fi
 
 log "===== run end ====="

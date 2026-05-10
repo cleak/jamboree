@@ -3,7 +3,7 @@ id: task-cli-task-spawn-list-show
 type: task
 status: done
 created: 2026-05-04T03:58:41.273099282Z
-updated: 2026-05-06T02:52:36.502820910Z
+updated: 2026-05-06T04:29:56.370820850Z
 edges:
 - target: feat-jam-cli
   type: child_of

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-tools:research.request-research.request",
+  "title": "research.request-research request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["question", "tier"],
+  "properties": {
+    "question": { "type": "string", "minLength": 1 },
+    "tier": { "type": "string", "enum": ["quick", "standard", "deep"] },
+    "scope": { "type": "string", "minLength": 1 },
+    "deadline": { "type": "string", "minLength": 1 }
+  }
+}

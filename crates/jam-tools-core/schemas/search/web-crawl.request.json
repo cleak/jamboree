@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-tools:search.web-crawl.request",
+  "title": "search.web-crawl request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["root_url", "max_depth"],
+  "properties": {
+    "root_url": { "type": "string", "format": "uri", "minLength": 1 },
+    "max_depth": { "type": "integer", "minimum": 0, "maximum": 2 },
+    "max_pages": { "type": "integer", "minimum": 1, "maximum": 25 },
+    "render_js": { "type": "boolean" },
+    "include_images": { "type": "boolean" }
+  }
+}

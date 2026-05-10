@@ -1,9 +1,9 @@
 ---
 id: comp-maestro-process
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:31:28.326090170Z
-updated: 2026-05-04T05:05:04.245007184Z
+updated: 2026-05-06T21:15:00Z
 edges:
 - target: comp-litellm-backend
   type: depends_on
@@ -27,3 +27,9 @@ Process is idle between sessions, awaiting wake events. Wake → load skills + w
 Per memory: Maestro uses ChatGPT subscription OAuth (not API key) — try LiteLLM `chatgpt/*` first, fall back to custom provider wrapping `codex-auth`. GPT-5.5 required.
 
 Lives in `maestro/src/jam_maestro/` per §11.1.
+
+Implementation note (2026-05-06): `python -m jam_maestro` now provides
+`run-task`, `wake-once`, and `listen` entrypoints around `MaestroSessionLoop`.
+`process-compose.yaml` includes a `maestro` process entry running the package
+from `/opt/jam/maestro`; production launch is still blocked on substrate install
+and runtime service startup.

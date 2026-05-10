@@ -1,9 +1,9 @@
 ---
 id: comp-secret-string-newtype
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:39:43.232434879Z
-updated: 2026-05-04T04:49:58.303892443Z
+updated: 2026-05-06T21:15:00Z
 edges:
 - target: comp-file-secret-backend
   type: depended_on_by

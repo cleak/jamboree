@@ -1,7 +1,7 @@
 ---
 id: feat-maestro-tool-surface
 type: feature
-status: draft
+status: active
 created: 2026-05-04T03:28:20.409793378Z
 updated: 2026-05-04T05:06:20.143235226Z
 owner: caleb
@@ -159,3 +159,7 @@ Surface buckets:
 - §5.9 Deliberately absent (no `merge-pr`, `read-file`/`write-file`/`run-command`, `eval`/`exec`, `auto-rebase`, etc.)
 
 The deliberately-absent category is the primary enforcement of §2.3 — invariants live in tool absence.
+
+Implementation note (2026-05-06): the Python Maestro scaffold now has `MaestroToolRegistry`, a callable-tool allowlist for the current generated tool request models. It explicitly rejects the §5.9 absent names at registry construction and returns stable `no such tool` errors for absent or unknown calls.
+
+Implementation note (2026-05-06): `notify-human` is now an allowlisted typed route backed by `crates/jam-tools-core/schemas/supervise/notify-human.request.json` and `tool.supervise.notify-human`.

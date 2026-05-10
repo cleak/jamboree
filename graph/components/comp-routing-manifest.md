@@ -1,9 +1,9 @@
 ---
 id: comp-routing-manifest
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:31:35.226866599Z
-updated: 2026-05-04T05:00:54.755422047Z
+updated: 2026-05-06T08:44:41Z
 edges:
 - target: comp-atomic-swap-procedure
   type: depended_on_by
@@ -64,3 +64,5 @@ Single source of truth for "which version of which service is current." Stored i
 ```
 
 Maestro reads at session start (cached for session); re-reads on `routing-manifest.updated` events.
+
+Implementation status (2026-05-06): schema-v1 structs and KV read/write helpers live in `crates/jam-nats`. `jam patch apply` performs the first concrete writer path, using NATS KV compare-and-swap for `routing-manifest/current` and publishing `routing-manifest.updated`. The Maestro has a Python `RoutingManifestRouter` with a NATS KV source for routed observe calls; the general multi-tool dispatch loop and rollback history reader remain future slices.

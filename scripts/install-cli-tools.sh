@@ -3,11 +3,11 @@
 # install-cli-tools.sh — Per-user installation of CLI harness tools for Jamboree.
 #
 # Tools per user:
-#   <human>  — codex + claude-code  (dev/test on caleb's account)
-#   maestro  — codex + claude-code  (Maestro harness; either may drive it)
-#   picker   — codex + claude-code  (Picker harnesses execute as picker)
+#   <human>  — codex + claude-code + opencode  (dev/test on caleb's account)
+#   maestro  — codex + claude-code + opencode  (Maestro harness; any may drive it)
+#   picker   — codex + claude-code + opencode  (Picker harnesses execute as picker)
 #
-# Per-user installs (not root) because both @openai/codex and the official
+# Per-user installs (not root) because npm-installed CLIs and the official
 # Claude Code installer auto-update by writing to their install location;
 # root-owned installs break that mechanism. Anthropic explicitly refuses
 # to run claude when its prefix is root-owned (claude-code issue #43).
@@ -230,6 +230,24 @@ EOF
     pass "$user: claude-code installed"
 }
 
+install_opencode() {
+    local user="$1"
+    if run_as "$user" <<<'command -v opencode >/dev/null 2>&1' 2>/dev/null; then
+        pass "$user: opencode already installed"
+        return 0
+    fi
+    info "$user: installing opencode-ai"
+    if ! run_as "$user" <<'EOF'
+export PATH="$HOME/.npm-global/bin:$PATH"
+npm install -g opencode-ai
+EOF
+    then
+        warn "$user: opencode install failed — see above"
+        return 1
+    fi
+    pass "$user: opencode installed"
+}
+
 # ---------------------------------------------------------------------------
 # Auto-update plumbing
 # ---------------------------------------------------------------------------
@@ -244,7 +262,7 @@ write_cron_config() {
     info "Writing cron config → $CRON_FILE"
 
     local cron_content="# /etc/cron.d/jam-cli-update
-# Daily auto-update for codex + claude-code, per Jamboree user.
+# Daily auto-update for codex + claude-code + opencode, per Jamboree user.
 # Times are staggered to spread network/load.
 # Each line runs as the named user (third field).
 SHELL=/bin/bash
@@ -277,9 +295,9 @@ check_user_has_tool() {
 verify() {
     local failed=0
 
-    for entry in "$HUMAN_USER:codex" "$HUMAN_USER:claude" \
-                 "$MAESTRO_USER:codex" "$MAESTRO_USER:claude" \
-                 "$PICKER_USER:codex" "$PICKER_USER:claude"; do
+    for entry in "$HUMAN_USER:codex" "$HUMAN_USER:claude" "$HUMAN_USER:opencode" \
+                 "$MAESTRO_USER:codex" "$MAESTRO_USER:claude" "$MAESTRO_USER:opencode" \
+                 "$PICKER_USER:codex" "$PICKER_USER:claude" "$PICKER_USER:opencode"; do
         local user="${entry%%:*}"
         local tool="${entry##*:}"
         if check_user_has_tool "$user" "$tool"; then
@@ -361,16 +379,19 @@ main() {
     ensure_npm_prefix "$HUMAN_USER"
     install_codex "$HUMAN_USER"
     install_claude_code "$HUMAN_USER"
+    install_opencode "$HUMAN_USER"
 
     header "Installing tools for $MAESTRO_USER"
     ensure_npm_prefix "$MAESTRO_USER"
     install_codex "$MAESTRO_USER"
     install_claude_code "$MAESTRO_USER"
+    install_opencode "$MAESTRO_USER"
 
     header "Installing tools for $PICKER_USER"
     ensure_npm_prefix "$PICKER_USER"
     install_codex "$PICKER_USER"
     install_claude_code "$PICKER_USER"
+    install_opencode "$PICKER_USER"
 
     header "Setting up daily auto-update"
     install_update_script
@@ -395,6 +416,8 @@ Next steps:
         sudo -u $MAESTRO_USER -i claude
         sudo -u $PICKER_USER  -i codex login --device-auth
         sudo -u $PICKER_USER  -i claude
+     OpenCode + DeepSeek uses the Jamboree secrets path instead of per-user
+     OAuth; seed jam/pickers/deepseek-api-key before live OpenCode spawns.
 
   2. Confirm cron is running (WSL doesn't auto-start it):
         sudo service cron status

@@ -1,9 +1,9 @@
 ---
 id: comp-jam-svc-worktree
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:39:31.913035840Z
-updated: 2026-05-04T04:54:54.279636957Z
+updated: 2026-05-06T22:02:08Z
 edges:
 - target: api-find-conflicts
   type: exposes
@@ -33,3 +33,5 @@ Worktree management tool service. Subject prefix `tool.worktree.*`. Crate `crate
 Tools: `worktree-diff(worktree-path, base-ref?)`, `find-conflicts(worktree-path, target-ref)`. Internal `worktree-create-protocol` runs underneath `spawn-picker` (§5.3, §6.9).
 
 Under multi-user model, worktree-root is `/home/picker/workers/<task-id>/` (mode 700, picker:picker).
+
+Implementation note (2026-05-06): `jam-svc-worktree` defaults `JAM_WORKTREE_ROOT` to `/home/picker/workers`; unit coverage locks this multi-user default. It now implements the read-only `worktree-diff` and `find-conflicts` surfaces on top of local git, preserving the configured worktree-root boundary before returning any paths or diff content.

@@ -1,9 +1,9 @@
 ---
 id: comp-jam-events-crate
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:39:46.883646051Z
-updated: 2026-05-04T04:24:41.086437661Z
+updated: 2026-05-06T21:15:00Z
 edges:
 - target: feat-event-schema-versioning
   type: used_by

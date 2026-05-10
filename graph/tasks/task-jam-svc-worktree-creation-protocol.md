@@ -1,9 +1,9 @@
 ---
 id: task-jam-svc-worktree-creation-protocol
 type: task
-status: backlog
+status: done
 created: 2026-05-04T03:58:20.723985368Z
-updated: 2026-05-04T04:09:48.319983471Z
+updated: 2026-05-06T04:39:50.909726898Z
 edges:
 - target: feat-sandboxing-profile-x-backend
   type: child_of

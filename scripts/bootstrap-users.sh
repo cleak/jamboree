@@ -676,7 +676,7 @@ main() {
 
 Next steps:
   1. Log out and back in (or run: newgrp $MAESTRO_USER) so group membership applies.
-  2. Install per-user CLI tools (codex, claude-code) and the daily auto-updater:
+  2. Install per-user CLI tools (codex, claude-code, opencode) and the daily auto-updater:
         sudo ./scripts/install-cli-tools.sh
   3. Initialize GPG keyring + pass for maestro:
         sudo -u $MAESTRO_USER -i

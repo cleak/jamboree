@@ -3,10 +3,12 @@ id: feat-ui-server
 type: feature
 status: draft
 created: 2026-05-04T03:28:20.030325778Z
-updated: 2026-05-04T04:14:58.421703229Z
+updated: 2026-05-06T15:52:03Z
 owner: caleb
 edges:
 - target: comp-jam-ui-server
+  type: uses
+- target: comp-jam-svc-message
   type: uses
 - target: comp-ntfy-push-bridge
   type: uses
@@ -46,6 +48,8 @@ edges:
 `jam-ui-server` Rust crate (axum) + SolidJS SPA, served as static files (§4.11, §18). Local-first; optional Tailscale CGNAT exposure for mobile.
 
 Real-time: WebSocket → NATS subscription bridge. No polling.
+
+Implementation note (2026-05-06): the first authenticated WebSocket subscription path is active and live-smoked through local NATS. The UI now opens a `notify.human` WebSocket stream after connect and displays the event in a notification drawer. Trace replay is active through `GET /api/trace/{trace_id}` plus `/traces/<trace-id>`. Message-mode UI controls are active through `POST /api/sessions/{session_id}/messages`, `jam-svc-message`, and `jam-svc-session` stdin delivery for running Pickers. Mobile exposure now has a runbook at `docs/runbooks/mobile-tailscale-ui.md` and startup bind-address enforcement for localhost/Tailscale CGNAT.
 
 Auth: session tokens (§4.11.1) + `allow-bind-addrs = ["127.0.0.1", "100.64.0.0/10"]` (localhost + Tailscale CGNAT range). `jam ui token` issues / revokes.
 

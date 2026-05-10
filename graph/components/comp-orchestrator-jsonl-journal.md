@@ -1,9 +1,9 @@
 ---
 id: comp-orchestrator-jsonl-journal
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:31:36.504213909Z
-updated: 2026-05-04T05:03:12.501286433Z
+updated: 2026-05-06T21:15:00Z
 edges:
 - target: api-orchestrator-journal-envelope
   type: exposes
@@ -32,3 +32,15 @@ Envelope (every event):
 `trace_id` placement at top level (not in payload) makes trace queries O(1) per-day-file.
 
 Journal-writer redacts known secret regex patterns at write time (§11.3).
+
+Implementation note (2026-05-06): `jam-nats-bridge` is the live NATS-to-JSONL path. `scripts/smoke-substrate-journal.sh` starts temporary NATS plus `jam-nats-bridge` under process-compose, verifies the `journal` stream and `KV_routing-manifest` stream exist, and confirms a traced `journal.test` message is persisted to `~/.jam/journal/YYYY-MM-DD/journal.test.jsonl` using the envelope timestamp for the date directory.
+
+Production smoke note (2026-05-06): the same script supports `--existing` for
+operator verification after `/opt/jam/bin/process-compose` starts the real
+substrate. It publishes `journal.test` to the configured NATS URL and verifies
+the JSONL entry under the runtime `JAM_HOME` instead of a temporary one.
+
+Maestro-runtime smoke note (2026-05-06): the same script also supports
+`--maestro-runtime`, which starts cached NATS and `target/debug/jam-nats-bridge`
+as `maestro` and verifies the write under `/home/maestro/.jam/journal` without
+requiring a production `/opt/jam/bin` install.

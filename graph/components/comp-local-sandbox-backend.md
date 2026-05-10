@@ -1,9 +1,9 @@
 ---
 id: comp-local-sandbox-backend
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:39:23.142462730Z
-updated: 2026-05-04T04:44:20.534198325Z
+updated: 2026-05-06T16:33:35Z
 edges:
 - target: comp-sandbox-backend-trait
   type: depends_on
@@ -19,3 +19,5 @@ Same machine, native process. Fast (no container overhead), shared build cache (
 For `local`, network is unrestricted by default. The `hardened-local` profile adds a process-level outbound-allowlist via a small forward-proxy that drops disallowed domains. The allowlist defaults to: harness API endpoints, GitHub, crates.io, npmjs.com, pypi.org. Project-config can extend per-project (§6.3).
 
 Resource limits via cgroup v2 (§6.4): CPU configurable per task class (compile-heavy Rust up to 8 cores; review tasks 2). Memory 8 GiB default cap. I/O ionice class 2 default; risky-architecture profile uses class 3 (idle).
+
+Implementation note (2026-05-06): `jam-svc-session` applies local resource limits with `systemd-run --user --scope --collect`, returning the transient `.scope` name in the `spawn-picker` response as `resource_scope`. The default table is compile-heavy/gameplay/ECS `CPUQuota=800%`, risky-architecture `CPUQuota=100%` + `IOWeight=10` + `ionice -c 3`, and other local tasks `CPUQuota=200%`, all with `MemoryMax=8G`. The cgroup smoke verifies these properties against `systemctl --user show`.

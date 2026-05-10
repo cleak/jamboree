@@ -57,6 +57,7 @@ die() {
 
 SECRETS=(
     "jam/pickers/github-app-id|single|recommended|Numeric GitHub App ID for the Jamboree-installed App. Required for any Picker that creates PRs."
+    "jam/pickers/github-app-installation-id|single|recommended|Numeric installation ID for the App installation on the Blueberry repo. Required for installation-token exchange."
     "jam/pickers/github-app-key|multi|recommended|PEM-format private key for the GitHub App (the entire -----BEGIN/-----END block)."
     "jam/notify/ntfy-token|single|recommended|ntfy.sh token used to page the Manager when something fails or needs sign-off."
     "jam/search/brave|single|recommended|Brave Search API key — default search-router backend per spec §4.8. Free tier (2k/mo) at https://brave.com/search/api/. Without this, web-search tool calls have no backend until you enable another provider below."

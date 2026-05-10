@@ -41,6 +41,9 @@ target/
 node_modules/
 __pycache__/
 *.py[cod]
+*.egg-info/
+.venv/
+.fastembed_cache/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/

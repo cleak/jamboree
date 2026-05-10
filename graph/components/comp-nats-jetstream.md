@@ -1,9 +1,9 @@
 ---
 id: comp-nats-jetstream
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:31:35.867957415Z
-updated: 2026-05-04T05:02:44.767277902Z
+updated: 2026-05-06T23:35:37Z
 edges:
 - target: api-nats-bus-subjects-catalog
   type: exposes
@@ -69,3 +69,24 @@ NATS KV buckets: `routing-manifest` (§20.2), `harness-versions`, `dispatch-stat
 Single-node JetStream (no cluster). TLS not required (loopback-only); auth token-based, generated at install time, stored in `pass`.
 
 Subscription model: durable consumers per service (resume from last-acknowledged offset on restart); ephemeral consumers per Maestro session.
+
+Implementation note (2026-05-06): `jam-nats-bridge` now idempotently ensures the default JetStream streams and KV buckets at startup. A local process-compose smoke verified temporary JetStream storage contains `journal` and `KV_routing-manifest` streams before publishing `journal.test`.
+
+Doctor note (2026-05-06): `jam doctor` now performs a real `nats-server-reachable` probe against `NATS_URL`, requiring a TCP connection and initial NATS `INFO` line instead of leaving the substrate reachability check deferred.
+
+Smoke note (2026-05-06): `scripts/smoke-substrate-journal.sh --existing`
+exercises the production NATS endpoint and bridge without starting temporary
+processes. It is intended for the post-`install-substrate.sh` acceptance step;
+the current machine still fails at the reachability probe because NATS is not
+running on `127.0.0.1:4222`.
+
+Maestro-runtime smoke note (2026-05-06):
+`scripts/smoke-substrate-journal.sh --maestro-runtime` verifies the same
+NATS-to-JSONL path without `/opt/jam/bin`: it starts cached `nats-server` and
+`target/debug/jam-nats-bridge` as `maestro`, writes the journal under
+`/home/maestro/.jam`, and cleans up its temporary JetStream store.
+
+Reverification note (2026-05-06): the maestro-runtime smoke passed again with
+trace `01KQYS00000000000000000000` landing in the production-shaped journal
+path. Production `--existing` remains blocked until `/opt/jam/bin` is installed
+and the substrate is started by an interactive/root shell.

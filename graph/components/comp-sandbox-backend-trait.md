@@ -1,9 +1,9 @@
 ---
 id: comp-sandbox-backend-trait
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:39:22.084422435Z
-updated: 2026-05-04T05:00:27.515384971Z
+updated: 2026-05-06T22:20:25Z
 edges:
 - target: api-sandbox-backend-contract
   type: exposes
@@ -20,14 +20,14 @@ edges:
 - target: feat-sandboxing-profile-x-backend
   type: used_by
 ---
-The `SandboxBackend` trait (§6.2, §19.4):
+The shared `SandboxBackend` contract (§6.2, §19.4), now defined in `crates/jam-tools-core/src/contracts.rs`:
 
 ```rust
 pub trait SandboxBackend: Send + Sync {
     fn id(&self) -> SandboxBackendId;
-    fn prepare(&self, spec: &SpawnSpec) -> Result<SandboxedEnvironment>;
-    fn launch(&self, env: &SandboxedEnvironment, cmd: Command) -> Result<Child>;
-    fn cleanup(&self, env: &SandboxedEnvironment) -> Result<()>;
+    fn prepare(&self, spec: &SpawnSpec) -> ContractResult<SandboxedEnvironment>;
+    fn launch(&self, env: &SandboxedEnvironment, cmd: Command) -> ContractResult<Child>;
+    fn cleanup(&self, env: &SandboxedEnvironment) -> ContractResult<()>;
 }
 
 pub struct SandboxedEnvironment {

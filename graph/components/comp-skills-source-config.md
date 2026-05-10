@@ -31,3 +31,5 @@ files = ["/home/caleb/blueberry/CLAUDE.md", "/home/caleb/blueberry/AGENTS.md"]
 ```
 
 Operator can extend by editing the file directly. No restart needed (`maestro` re-reads on next session).
+
+Implementation note (2026-05-06): both Python `FileSkillLoader` and Rust `jam-svc-knowledge` resolve the config as `$JAM_SKILLS_CONFIG` when set, otherwise `$JAM_HOME/config/skills.toml`; `JAM_HOME` itself now follows the shared current-user rule from security-setup §7.1.

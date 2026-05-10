@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:tempyr.write-pending",
+  "title": "tempyr.write-pending",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "write_id": {
+      "type": "string"
+    },
+    "node_id": {
+      "type": "string"
+    },
+    "operation": {
+      "type": "string"
+    },
+    "request_path": {
+      "type": "string"
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "A trusted orchestrator component queued a Tempyr write side-effect for retry (\u00a74.6.4).",
+  "required": [
+    "write_id",
+    "node_id",
+    "operation",
+    "request_path",
+    "ts"
+  ]
+}

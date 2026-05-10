@@ -1,9 +1,9 @@
 ---
 id: comp-search-router
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:34:51.142845148Z
-updated: 2026-05-04T04:50:15.444135460Z
+updated: 2026-05-06T23:11:01Z
 edges:
 - target: comp-jam-svc-search
   type: depended_on_by
@@ -33,3 +33,11 @@ edges:
 **Routing transparency**: every search response carries a `routing` envelope explaining which backend was chosen and why; logged into journal for skill-evolution training data.
 
 Memory: Brave is the recommended primary for §4.8 search-router; Context7 covers §4.9 MCP layer; other providers deferred until workload demands.
+
+Active v1 router still keeps Brave as the default search backend and does not
+silently fall through a fallback chain. Optional configured routes now cover
+SearXNG for privacy-sensitive search intent and Linkup for source-backed or
+citation-oriented intent; missing required provider config surfaces
+`capability-unavailable`. Extraction and crawl routing choose direct fetch by
+default and Firecrawl when configured or when `render_js=true` requires a
+JavaScript-capable backend.

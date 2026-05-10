@@ -1,9 +1,9 @@
 ---
 id: comp-litellm-backend
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:31:28.851727765Z
-updated: 2026-05-04T05:01:49.472112339Z
+updated: 2026-05-06T21:15:00Z
 edges:
 - target: api-maestro-backend-protocol
   type: exposes
@@ -30,3 +30,9 @@ Provider-agnostic plumbing per §2.8 — when policy weather hits, swapping is `
 `MaestroResponse`: content blocks, stop_reason, usage, cost_usd.
 
 Per memory: ChatGPT subscription OAuth path is non-standard — try LiteLLM's `chatgpt/*` provider first; if unavailable, write a custom `MaestroBackend` impl that wraps `codex-auth` for the Codex OAuth credential.
+
+Implementation note (2026-05-06): `maestro/src/jam_maestro/backend.py`
+implements the provider-neutral `MaestroBackend` protocol and `LiteLLMBackend`.
+It normalizes text, reasoning, tool calls, token usage, finish reasons, and
+cost into `MaestroResponse`; unit coverage verifies response normalization and
+fail-loud cost handling.

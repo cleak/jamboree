@@ -1,0 +1,33 @@
+[package]
+name = "jam-task-lifecycle"
+description = "Tempyr task lifecycle reconciler for Picker and PR events (§4.6.2)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "jam-task-lifecycle"
+path = "src/main.rs"
+
+[dependencies]
+chrono = { workspace = true }
+futures = { workspace = true }
+jam-events = { path = "../jam-events" }
+jam-nats = { path = "../jam-nats" }
+jam-trace = { path = "../jam-trace" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.14"
+
+[lints]
+workspace = true

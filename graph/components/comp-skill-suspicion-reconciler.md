@@ -1,9 +1,9 @@
 ---
 id: comp-skill-suspicion-reconciler
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:31:44.067889753Z
-updated: 2026-05-04T05:03:49.898498185Z
+updated: 2026-05-06T09:53:54Z
 edges:
 - target: comp-nats-jetstream
   type: depends_on
@@ -42,3 +42,7 @@ for skill, entry_ids in skill_failures.items():
 Maestro sees the event on next wake; decides whether to flag for evolution, deprecate, or ignore. Skills aren't auto-quarantined.
 
 Crate `crates/jam-skill-suspicion/` (bin).
+
+Implemented as `jam-skill-suspicion`; process-compose already declares the
+disabled-by-default `skill-suspicion-reconciler` process pointing at
+`/opt/jam/bin/jam-skill-suspicion`.

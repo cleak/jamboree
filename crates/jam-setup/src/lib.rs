@@ -9,7 +9,8 @@
 //! ## Check set
 //!
 //! 13 base checks from spec §11.4 + 11 multi-user additions from
-//! security-setup §10 = **24 total**. See [`run_all_checks`].
+//! security-setup §10 + 2 Phase 9 learned failure checks = **26 total**.
+//! See [`run_all_checks`].
 //!
 //! ## Output shape
 //!

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-tools:worktree.find-conflicts.request",
+  "title": "worktree.find-conflicts request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["worktree_path", "target_ref"],
+  "properties": {
+    "worktree_path": { "type": "string", "minLength": 1 },
+    "target_ref": { "type": "string", "minLength": 1 }
+  }
+}

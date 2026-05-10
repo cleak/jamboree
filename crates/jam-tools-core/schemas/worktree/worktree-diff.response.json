@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-tools:worktree.worktree-diff.response",
+  "title": "worktree.worktree-diff response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["worktree_path", "base_ref", "changed_files", "diff"],
+  "properties": {
+    "worktree_path": { "type": "string", "minLength": 1 },
+    "base_ref": { "type": "string", "minLength": 1 },
+    "changed_files": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "diff": { "type": "string" }
+  }
+}

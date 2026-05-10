@@ -1,9 +1,9 @@
 ---
 id: comp-events-toml-and-codegen
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:31:37.804286873Z
-updated: 2026-05-04T05:03:03.820455044Z
+updated: 2026-05-06T21:15:00Z
 edges:
 - target: api-events-toml-manifest
   type: exposes
@@ -49,4 +49,6 @@ Codegen output:
 
 `tools/events-codegen.py` runs as Cargo build script and pre-commit hook. CI verifies generated files in sync with `events.toml` (§13.16).
 
-Same approach for tool I/O: each `jam-svc-*` crate's Rust types (with `schemars` derive) → `<service>.schema.json` via `tools/schema-export.rs` → Pydantic models via `tools/pydantic-gen.py` → `maestro/src/jam_maestro/tools/<service>.py` (§11.2.6).
+Tool I/O codegen follows the same contract-first shape. The Phase 1 slice keeps checked-in JSON schemas at `crates/jam-tools-core/schemas/<service>/<tool>.<request|response>.json` for observe, repo, session, and worktree, then `tools/pydantic-gen.py` renders generated Pydantic models under `maestro/src/jam_maestro/tools/` (§11.2.6).
+
+Current Maestro usage wires `ObserveClient.world_snapshot` through `ObserveWorldSnapshotRequest`, giving pyright a concrete generated type boundary. Future hardening should move the schema source from checked-in JSON to Rust `schemars` exports without changing the generated Python package shape.

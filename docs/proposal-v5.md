@@ -647,7 +647,7 @@ picker.<session-id>.msg.status
 picker.<session-id>.lifecycle  — spawn / exit / etc.
 picker.<session-id>.output     — stdout/stderr stream
 
-quota.<harness>.<event>        — exhausted, refilled, reset
+quota.<harness>.<event>        — exhausted, refilled, reset, usage-observed
 
 tempyr.<event>                 — node-changed, write-pending, write-confirmed,
                                  update-candidate, journal-flushed
@@ -843,6 +843,10 @@ Token counting per harness happens via process-side instrumentation (parsing har
 
 `PriceEvent` exposes things like "DeepSeek's 75% sale ends 2026-05-31 15:59 UTC" so the Maestro can plan around upcoming cost changes. This is config-loaded; we don't try to detect price changes automatically.
 
+Implementation surface: `jam-svc-observe` reads optional quota metadata from `JAM_QUOTA_CONFIG`, then `JAM_PROJECT_CONFIG`, then an existing `~/.jam/config/projects/blueberry.toml`. The config keys are `quota.windows."<harness>/<window-kind>"`, `quota.api-budgets."<harness>/<window-kind>"`, and `quota.price-events`; the merged data is exposed through both `world-snapshot.harness_quotas` and `query-quota`.
+
+Process-side usage observations publish `quota.usage-observed` with optional token and cost fields. The observe service folds those into the matching `harness/window-kind` state; API-budget usage is added to configured monthly spend before computing the remaining fraction.
+
 #### 4.4.6 Reconcilers and watchers
 
 Cheap deterministic processes that run independently of Maestro judgment. Each subscribes to the relevant bus subjects and emits derived events; none make policy decisions.
@@ -1023,7 +1027,7 @@ version = "1.8.4"
 checksum-sha256 = "def456..."
 last-validated = "2026-04-30T14:22:11Z"
 
-[harnesses.opencode]
+[harnesses.opencode-deepseek]
 version = "1.14.27"
 checksum-sha256 = "789abc..."
 last-validated = "2026-04-30T14:22:11Z"
@@ -1032,7 +1036,7 @@ config-snapshot = "..."  # path to OpenCode config file at validation time
 
 Three enforcement points:
 
-**At spawn time.** The harness adapter checks `version` and `checksum-sha256` against the installed binary. Mismatch → spawn fails with `harness-version-drift` event. Maestro sees the event, escalates to human via `notify-human`.
+**At spawn time.** The harness adapter checks `version` and `checksum-sha256` against the installed binary. The live policy is configurable through `JAM_HARNESS_LOCKFILE_POLICY`: `warn` logs and continues on concrete version/checksum drift, `strict` fails the spawn with `harness-version-drift` or `harness-checksum-drift`, and `off` skips concrete comparison. Missing or malformed lockfiles still fail loudly.
 
 **On periodic schedule.** `harness-version-watcher` (cheap, runs every hour) compares installed binaries against the lockfile and emits `harness.version-changed` events on drift. Patch agent picks these up.
 
@@ -1083,7 +1087,7 @@ Config:
 
 ```toml
 # ~/.jam/config/projects/blueberry.toml
-trunk-branch = "main"
+trunk-branch = "master"
 fetch-staleness-secs = 60
 canonical-worktree = "/home/caleb/blueberry-jam"
 canonical-branch = "tempyr-live"
@@ -1374,7 +1378,7 @@ Tiered access to provider research engines. We don't build research infrastructu
 pub enum ResearchTier {
     Quick,    // single-call: Tavily /research, ~$0.01-0.05, 5-30s
     Standard, // multi-step: Perplexity Sonar Pro, ~$0.10-0.50, 30-120s
-    Deep,     // exhaustive: Exa Deep Research / Parallel Pro, ~$1-5, 5-15min
+    Deep,     // exhaustive: Exa deep-reasoning search / Parallel Pro, ~$1-5, 5-15min
 }
 
 pub fn request_research(input: RequestResearchInput) -> Result<ResearchHandle> {
@@ -1400,7 +1404,7 @@ On completion, a `research-completion-handler` reads `findings.json` and creates
 Provider-specific routing inside each tier:
 - Quick: `Tavily /research` (cheap, fast, decent breadth) → fallback Sonar.
 - Standard: `Perplexity Sonar Pro` → fallback Sonar Reasoning Pro.
-- Deep: `Exa Deep Research` (best when discovery matters) → fallback `Parallel Pro` → fallback Sonar Reasoning Pro.
+- Deep: `Exa deep-reasoning search` (best when discovery matters) → fallback `Parallel Pro` → fallback Sonar Reasoning Pro.
 
 ### 4.11 UI server
 
@@ -1774,6 +1778,8 @@ The canonical Tempyr worktree (§4.6.1) is created **once at orchestrator instal
 
 ```bash
 git -C /home/caleb/blueberry worktree add /home/caleb/blueberry-jam tempyr-live
+# First install, if tempyr-live does not exist yet:
+git -C /home/caleb/blueberry worktree add -b tempyr-live /home/caleb/blueberry-jam origin/master
 ```
 
 If the canonical worktree gets corrupted (rare), recovery is `jam tempyr canonical-worktree recreate`, which:
@@ -2064,7 +2070,7 @@ The system is designed so that any single component failure does not cascade.
 | Search backend cooldown cascade (all backends failing) | Search router | Surface error; do not silently degrade |
 | MCP server prompt-injection attempt | `Untrusted<String>` discipline + lint rules | Static analysis catches; runtime behavior safe by construction |
 | NTP unsynchronized | `clock-watcher` | Emit `clock.unsynced`; ntfy human |
-| Harness version drift | `harness-version-watcher` | Emit `harness.version-changed`; refuse new spawns until acknowledged |
+| Harness version drift | `harness-version-watcher` / spawn-time check | Emit `harness.version-changed`; live default warns and continues, `strict` policy refuses new spawns until acknowledged |
 | Skill under suspicion (3+ dead_ends in 7d) | `skill-suspicion-reconciler` | Emit `skill.under-suspicion`; Maestro reviews on next wake |
 | Patch left system unhealthy | Patch agent (§20.5) | Mechanical rollback; LLM diagnosis; ntfy human if unrecoverable |
 
@@ -2401,6 +2407,7 @@ jam/harness/codex-cli-token
 
 jam/pickers/deepseek-api-key
 jam/pickers/github-app-id
+jam/pickers/github-app-installation-id
 jam/pickers/github-app-key   # private key for App auth
 
 jam/search/brave
@@ -2629,7 +2636,7 @@ Phased plan with explicit acceptance criteria per phase. Each phase is "done" wh
 **Acceptance:**
 - [ ] Spawn 3 Pickers across 3 different harnesses in parallel; each runs in its own worktree, journals to Tempyr correctly, completes or fails cleanly.
 - [ ] Manual-test the quota tracker by burning Codex CLI quota and watching the Maestro route subsequent tasks elsewhere.
-- [ ] Test version drift: bump a harness binary out-of-band; verify `harness-version-watcher` emits the event and Maestro refuses new spawns.
+- [ ] Test version drift: bump a harness binary out-of-band; verify `harness-version-watcher` emits the event, default `warn` policy records drift while allowing spawn, and `strict` policy refuses new spawns.
 
 ### Phase 3.5 — Search and research (1 week)
 
@@ -4394,4 +4401,3 @@ When in doubt:
 - When the spec is silent on a detail, ask Caleb. Don't infer policy from architecture.
 
 ---
-

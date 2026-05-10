@@ -1,9 +1,9 @@
 ---
 id: comp-jam-secrets
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:39:39.635246686Z
-updated: 2026-05-04T05:00:36.963904484Z
+updated: 2026-05-06T21:15:00Z
 edges:
 - target: api-secret-backend-contract
   type: exposes

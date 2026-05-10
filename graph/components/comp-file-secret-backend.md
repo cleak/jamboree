@@ -1,9 +1,9 @@
 ---
 id: comp-file-secret-backend
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:39:42.022961506Z
-updated: 2026-05-04T04:45:18.763245993Z
+updated: 2026-05-06T21:15:00Z
 edges:
 - target: comp-jam-secrets
   type: depends_on

@@ -3,7 +3,7 @@ id: feat-messaging-three-modes
 type: feature
 status: draft
 created: 2026-05-04T03:28:20.801773916Z
-updated: 2026-05-04T04:36:23.244115307Z
+updated: 2026-05-06T15:52:03Z
 owner: caleb
 edges:
 - target: api-enqueue-message
@@ -36,3 +36,11 @@ Three message modes corresponding to three execution-state contracts (§5.7):
 Both source identities (Maestro, human) go through the same tools; tag-on-write distinguishes (`from: human` with optional user-id; `from: maestro` with maestro-session-id). Skill evolution treats human messages as higher-quality supervision signal.
 
 NATS subjects: `picker.<session-id>.msg.queue|interrupt|kill|status`. Strict ordering per session-id; `kill` takes precedence; `queue`/`interrupt` after kill rejected.
+
+Implementation note (2026-05-06): Phase 1 queue/interrupt bus-to-stdin
+delivery is active. `jam-svc-message` owns the public tool surface and
+`jam-svc-session` subscribes each running Picker to its session-scoped
+queue/interrupt subjects, writes framed messages to Picker stdin, and emits
+the status lifecycle. Full-stop is active through `tool.session.full-stop`.
+Per-harness safe-checkpoint interrupt mechanics remain a harness adapter
+refinement.

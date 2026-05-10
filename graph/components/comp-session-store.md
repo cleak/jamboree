@@ -1,9 +1,9 @@
 ---
 id: comp-session-store
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:31:37.152259599Z
-updated: 2026-05-04T05:02:54.277551224Z
+updated: 2026-05-06T21:15:00Z
 edges:
 - target: comp-hermes-fts5-schema
   type: depends_on
@@ -23,3 +23,5 @@ Tables: `sessions(id, started_at, ended_at, actor, trace_id, metadata_json)`, `m
 Reconciler subscribes to journal events and replays them into the session store with at-least-once delivery semantics. If the session store gets corrupted or schema-migrated, it's rebuilt from the journal — the journal is sacred (`principle-journal-is-sacred-no-compaction`).
 
 `query-session-store` exposes FTS5 queries to the Maestro. Path `~/.jam/session-store.db`.
+
+Implementation note (2026-05-06): `jam-journal-reconciler` now creates and populates this schema at `JAM_SESSION_STORE_DB` (default `~/.jam/session-store.db`). The MVP stores every ingested journal event as a searchable message and records `maestro.tool-called` payloads in `tool_calls`.

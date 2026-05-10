@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-tools:session.full-stop.request",
+  "title": "session.full-stop request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["session_id", "reason"],
+  "properties": {
+    "session_id": { "type": "string", "minLength": 1 },
+    "reason": { "type": "string", "minLength": 1 },
+    "requested_by": { "type": "string", "minLength": 1 }
+  }
+}

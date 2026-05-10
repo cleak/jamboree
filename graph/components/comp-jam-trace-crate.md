@@ -1,9 +1,9 @@
 ---
 id: comp-jam-trace-crate
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:39:44.447233997Z
-updated: 2026-05-04T05:01:31.457229639Z
+updated: 2026-05-06T21:15:00Z
 edges:
 - target: comp-jam-cli-binary
   type: depended_on_by

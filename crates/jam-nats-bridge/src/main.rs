@@ -12,7 +12,7 @@
 //!
 //! | Variable | Default | Purpose |
 //! |---|---|---|
-//! | `JAM_HOME` | `/home/maestro/.jam` | Root for journal output (`<JAM_HOME>/journal/`). |
+//! | `JAM_HOME` | resolved per security-setup §7.1 | Root for journal output (`<JAM_HOME>/journal/`). |
 //! | `NATS_URL` | `nats://127.0.0.1:4222` | Single-node JetStream URL. |
 //! | `NATS_TOKEN` | unset | Auth token (production: source from `pass`). |
 //! | `RUST_LOG` | `jam_nats_bridge=info` | Tracing filter. |
@@ -23,8 +23,6 @@
 //! resumes from its last-acknowledged offset on restart. Per spec §4.4.1.
 
 #![deny(missing_docs)]
-
-use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use futures::StreamExt;
@@ -59,13 +57,13 @@ async fn main() -> std::process::ExitCode {
 async fn run() -> Result<(), BridgeError> {
     init_tracing();
 
-    let jam_home = std::env::var("JAM_HOME").unwrap_or_else(|_| "/home/maestro/.jam".into());
+    let jam_home = jam_tools_core::paths::jam_home();
     let nats_url = std::env::var("NATS_URL").unwrap_or_else(|_| "nats://127.0.0.1:4222".into());
     let nats_token = std::env::var("NATS_TOKEN").ok();
 
-    let journal_root = PathBuf::from(&jam_home).join("journal");
+    let journal_root = jam_home.join("journal");
     info!(
-        jam_home = %jam_home,
+        jam_home = %jam_home.display(),
         journal_root = %journal_root.display(),
         nats_url = %nats_url,
         "bridge starting",
@@ -80,10 +78,11 @@ async fn run() -> Result<(), BridgeError> {
     let nats = JamNats::connect(&nats_url, nats_token).await?;
     info!("connected to NATS");
 
-    // Idempotently ensure the journal stream exists (substrate startup
-    // ordering means we may race process-compose's nats start).
+    // Idempotently ensure substrate JetStream resources exist (substrate
+    // startup ordering means we may race process-compose's nats start).
     jam_nats::ensure_streams(nats.jetstream(), &jam_nats::default_streams()).await?;
-    info!("substrate streams ensured");
+    jam_nats::ensure_kv_buckets(nats.jetstream(), &jam_nats::default_kv_buckets()).await?;
+    info!("substrate streams and KV buckets ensured");
 
     let stream = nats
         .jetstream()

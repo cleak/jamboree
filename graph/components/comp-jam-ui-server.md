@@ -1,10 +1,12 @@
 ---
 id: comp-jam-ui-server
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:35:06.772283983Z
-updated: 2026-05-04T04:49:06.259027485Z
+updated: 2026-05-06T14:18:59Z
 edges:
+- target: comp-jam-svc-message
+  type: depends_on
 - target: comp-ntfy-push-bridge
   type: depends_on
 - target: comp-ui-frontend-solidjs
@@ -37,5 +39,20 @@ WS   /ws                                       # bus event subscription
 ```
 
 Backend serves the SolidJS SPA as static files. Local-first; optional Tailscale CGNAT exposure for mobile.
+
+Implementation note (2026-05-06): active endpoints include `/api/health`,
+`/api/auth/check`, `/ws`, authenticated `/api/trace/{trace_id}`, and
+authenticated `POST /api/sessions/{session_id}/messages`. The trace endpoint
+reads durable JSONL journal files under `$JAM_HOME/journal`, validates ULID
+trace IDs, walks parent traces by `parent_trace_id`, and returns chronological
+entries with source file/line for the UI replay view. The message endpoint
+delegates to `tool.message.enqueue-message`,
+`tool.message.interrupt-with-message`, and `tool.message.full-stop` so
+message-mode behavior stays behind the service boundary.
+
+Mobile/Tailscale note (2026-05-06): startup rejects `JAM_UI_BIND` addresses
+outside `JAM_UI_ALLOW_BIND_ADDRS`, defaulting to `127.0.0.1` and
+`100.64.0.0/10` per §4.11.1. Smoke verified `0.0.0.0:8787` fails before
+static/NATS setup while `100.64.0.1:8787` passes the bind guard.
 
 Runs as `maestro` user under multi-user model (security-setup §7.6). UI session tokens still attribute actions per-user-id; journal records `from: human:caleb` for UI-initiated actions, not `from: maestro`.

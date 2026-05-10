@@ -17,6 +17,7 @@ edges:
 Equivalent manual commands:
 ```bash
 sudo -u maestro -i pass insert jam/pickers/github-app-id
+sudo -u maestro -i pass insert jam/pickers/github-app-installation-id
 sudo -u maestro -i pass insert -m jam/pickers/github-app-key
 sudo -u maestro -i pass insert jam/notify/ntfy-token
 sudo -u maestro -i pass insert jam/nats/token

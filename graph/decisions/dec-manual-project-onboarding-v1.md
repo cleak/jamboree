@@ -19,6 +19,6 @@ Day-one workflow (manual):
 4. `jam tempyr canonical-worktree create blueberry` (or manual `git worktree add`) creates `~/code/blueberry-tempyr-live/`.
 5. Skills repo seed (Maestro.md + minimal scaffolding) populated from a seed location.
 
-`jam project add <name>` is a future CLI feature (post-v1) that automates these steps. Captured as `task-jam-project-add-future`.
+The older `jam project add <name>` automation idea is captured as `task-jam-project-add-future`, but that task is cut by `dec-single-project-per-instance`: a second project gets a second Jamboree instance rather than multi-project CLI support inside this one.
 
 Why manual now: only one project exists; automating an N=1 case is over-engineering. Documenting the steps is enough.

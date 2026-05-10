@@ -1,9 +1,9 @@
 ---
 id: feat-jam-cli
 type: feature
-status: draft
+status: active
 created: 2026-05-04T03:28:26.759173906Z
-updated: 2026-05-04T05:39:13.477888540Z
+updated: 2026-05-06T20:16:21Z
 owner: caleb
 edges:
 - target: comp-jam-cli-binary
@@ -35,7 +35,7 @@ The `jam` CLI binary (Rust, `crates/jam-cli/`). User-facing commands per §24.1,
 
 - `jam setup` — preflight checks; refuses to install on bad environment.
 - `jam doctor` — same checks any time, plus multi-user additions (security-setup §10).
-- `jam start` / `jam stop` / `jam status` — orchestrator lifecycle (runs as maestro under the hood).
+- Future lifecycle wrapper: `jam start` / `jam stop` / `jam status`. Current operator path is root-launched `process-compose` because `process-compose.yaml` uses per-process `user: maestro`.
 - `jam task spawn 'description' --project <p> --task-class <c> --priority <pri>` — opens a root trace and publishes `journal.task.requested`.
 - `jam task list`, `jam task show <id>`, `jam task cleanup`.
 - `jam trace replay <trace-id>` — calls into the trace-replay tool.
@@ -45,3 +45,5 @@ The `jam` CLI binary (Rust, `crates/jam-cli/`). User-facing commands per §24.1,
 - `jam ui token` / `jam ui token --revoke <id>` / `jam ui token --revoke-all`.
 - `jam pause-dispatch --reason <r>` / `jam resume-dispatch`.
 - `jam maestro resume <session-id> --budget-extension N` / `jam maestro abandon <session-id>`.
+
+Implementation note (2026-05-06): `jam quota show` is implemented against `tool.observe.query-quota` with traced NATS request-reply. It prints the full quota map or filters with `--harness-id`. `jam quota recalibrate` publishes traced `journal.quota.*` corrections for `available`, `exhausted`, and `low` states.

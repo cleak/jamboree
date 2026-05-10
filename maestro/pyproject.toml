@@ -1,0 +1,57 @@
+[project]
+name = "jam-maestro"
+version = "0.1.0"
+description = "Python Maestro process for the Jamboree orchestrator."
+requires-python = ">=3.12"
+dependencies = [
+    "litellm>=1.70,<2",
+    "pydantic>=2.10,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pyright>=1.1,<2",
+    "pytest>=8,<9",
+    "ruff>=0.8,<1",
+]
+
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jam_maestro"]
+
+[tool.uv]
+package = true
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "D",      # pydocstyle - docs are written where they carry design weight.
+    "COM812", # trailing comma - ruff format owns this.
+    "S101",   # pytest uses assert.
+]
+
+[tool.pyright]
+include = ["src", "tests"]
+strict = ["src/**"]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+reportMissingTypeStubs = "error"
+reportUnknownMemberType = "error"
+reportUnknownArgumentType = "error"
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers --strict-config"
+testpaths = ["tests"]
+markers = [
+    "slow: marks tests as slow",
+    "integration: marks integration tests",
+    "live-llm: requires live LLM access",
+]

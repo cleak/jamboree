@@ -1,9 +1,9 @@
 ---
 id: api-compute-readiness
 type: api_surface
-status: draft
+status: stable
 created: 2026-05-04T03:51:49.084708401Z
-updated: 2026-05-04T04:53:09.047003096Z
+updated: 2026-05-06T21:18:32Z
 edges:
 - target: comp-jam-svc-observe
   type: exposed_by
@@ -18,3 +18,5 @@ edges:
 Reads from world-snapshot. Surfaces branch staleness, Tempyr index drift, CI status, review artifact open-counts.
 
 Maestro disagrees and overrides whenever justified — `compute-readiness` is signal, not policy.
+
+Implementation note (2026-05-06): `tool.observe.compute-readiness` is implemented in `jam-svc-observe` and derives its verdict from the current world snapshot blocker/warning set.

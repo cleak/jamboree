@@ -1,9 +1,9 @@
 ---
 id: task-document-blueberry-manual-onboarding
 type: task
-status: backlog
+status: done
 created: 2026-05-04T05:38:18.142068285Z
-updated: 2026-05-04T05:39:31.869674354Z
+updated: 2026-05-06T05:49:51Z
 edges:
 - target: dec-manual-project-onboarding-v1
   type: blocked_by
@@ -23,3 +23,5 @@ Per `dec-manual-project-onboarding-v1`. Cover:
 6. Verify with `jam doctor`.
 
 Acceptance: a fresh Blueberry onboarding from a clean machine completes in <30min following only the doc.
+
+Implementation note (2026-05-06): Added `docs/onboard-blueberry.md` with the manual v1 flow: bootstrap scripts, substrate install, `blueberry.toml` template, `blueberry-harnesses.lock` template, canonical worktree creation/recovery using `/home/caleb/blueberry-jam` per `dec-blueberry-jam-path`, skills verification, process-compose startup, `jam doctor`, and NATS-to-JSONL smoke checks.

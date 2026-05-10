@@ -41,17 +41,19 @@ The bridge between them is `jam patch apply` (per spec §21.6) — a hot-patch f
 ├── docs/                          # Specs and decision records
 │   ├── proposal-v5.md             # Architecture spec (§0–§24)
 │   ├── security-setup.md          # Multi-user isolation addendum
-│   └── layout.md                  # This file
+│   ├── layout.md                  # This file
+│   └── runbooks/                  # Operator recovery procedures
 │
 ├── scripts/                       # System bootstrap and ops scripts
 │   ├── bootstrap-users.sh         # Creates maestro/picker users + sudoers
-│   ├── install-cli-tools.sh       # Per-user codex + claude-code installs
+│   ├── install-cli-tools.sh       # Per-user codex + claude-code + opencode installs
 │   ├── cli-tools-update.sh        # Daily auto-update (invoked by cron)
 │   ├── init-maestro-keyring.sh    # Maestro GPG + pass init
 │   └── seed-maestro-secrets.sh    # Interactive secrets walk
 │
 ├── crates/                        # Rust workspace (Phase 3+)
 │   ├── jam-cli/                   # The `jam` CLI binary
+│   ├── jam-patch-agent/           # Hot-patch supervisor (§20.5)
 │   ├── jam-svc-observe/           # Observation tool service (§4.2)
 │   ├── jam-svc-supervise/         # Picker supervisor (§4.4.8)
 │   ├── jam-stall-detector/        # Stall detector (§4.4.6)

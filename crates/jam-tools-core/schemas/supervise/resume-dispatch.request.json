@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-tools:supervise.resume-dispatch.request",
+  "title": "supervise.resume-dispatch request",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "changed_by": { "type": "string", "minLength": 1, "maxLength": 200 }
+  }
+}

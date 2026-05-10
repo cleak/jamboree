@@ -5,10 +5,16 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
+    "write_id": {
+      "type": "string"
+    },
     "node_id": {
       "type": "string"
     },
     "operation": {
+      "type": "string"
+    },
+    "request_path": {
       "type": "string"
     },
     "last_error": {

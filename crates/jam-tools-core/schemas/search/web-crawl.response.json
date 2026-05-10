@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-tools:search.web-crawl.response",
+  "title": "search.web-crawl response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["root_url", "pages", "routing", "trace_id"],
+  "properties": {
+    "root_url": { "type": "string", "format": "uri" },
+    "pages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["url", "title", "text", "images"],
+        "properties": {
+          "url": { "type": "string", "format": "uri" },
+          "title": { "type": ["string", "null"] },
+          "text": { "type": "string" },
+          "images": {
+            "type": "array",
+            "items": { "type": "string", "format": "uri" }
+          }
+        }
+      }
+    },
+    "routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["backend", "reason", "cooldown_until"],
+      "properties": {
+        "backend": { "type": "string" },
+        "reason": { "type": "string" },
+        "cooldown_until": { "type": ["string", "null"], "format": "date-time" }
+      }
+    },
+    "trace_id": { "type": "string" }
+  }
+}

@@ -1,9 +1,9 @@
 ---
 id: api-secret-backend-contract
 type: api_surface
-status: draft
+status: stable
 created: 2026-05-04T03:53:41.173938945Z
-updated: 2026-05-04T05:00:36.963904845Z
+updated: 2026-05-06T21:29:02Z
 edges:
 - target: comp-jam-secrets
   type: exposed_by
@@ -20,3 +20,5 @@ pub trait SecretBackend: Send + Sync {
 ```
 
 Implementations: `PassBackend`, `FileBackend`. Plus per-harness allowlist via `secret_backend.get_for_harness(harness_id)`.
+
+Implementation note (2026-05-06): `crates/jam-secrets` provides `SecretBackend`, `SecretKey`, `SecretString`, `PassBackend`, and `FileBackend`; downstream services use the same types for runtime secret loading.

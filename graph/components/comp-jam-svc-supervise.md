@@ -1,7 +1,7 @@
 ---
 id: comp-jam-svc-supervise
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:39:36.110301746Z
 updated: 2026-05-04T04:58:38.302535341Z
 edges:
@@ -33,3 +33,7 @@ edges:
 Supervise/notify tool service. Subject prefix `tool.supervise.*`. Crate `crates/jam-svc-supervise/`.
 
 Owns process group IDs for every Picker (used by `full-stop`). Owns `notify-human` (§5.8) → ntfy bridge. Owns `pause-dispatch(reason)` / `resume-dispatch()` (sets `dispatch-paused` in NATS KV bucket `dispatch-state`).
+
+Implementation note (2026-05-06): `crates/jam-svc-supervise` now exposes traced request/reply for `tool.supervise.notify-human`, validates `urgency`/`summary`/`payload`, publishes the same-trace `notify.human` bus event, and supports health ping. The Maestro typed tool registry includes `notify-human`.
+
+Implementation note (2026-05-06): `tool.supervise.pause-dispatch` and `tool.supervise.resume-dispatch` now update the durable NATS KV `dispatch-state` bucket. They share the CLI's `dispatch-paused` bool and structured `state` record so `jam task spawn` and Maestro-side controls observe the same pause flag.

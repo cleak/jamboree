@@ -1,9 +1,9 @@
 ---
 id: comp-worktree-create-protocol
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:39:27.441061671Z
-updated: 2026-05-04T05:03:31.621093856Z
+updated: 2026-05-06T21:15:00Z
 edges:
 - target: api-worktree-create-protocol
   type: exposes

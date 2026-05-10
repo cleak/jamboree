@@ -1,9 +1,9 @@
 ---
 id: comp-time-and-clock
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:31:38.467137801Z
-updated: 2026-05-04T04:28:24.640337891Z
+updated: 2026-05-06T21:18:00Z
 edges:
 - target: constraint-ntp-sync-required
   type: constrained_by
@@ -20,3 +20,9 @@ Rules in order (§4.4.4):
 6. SSH and Modal backends emit events with their own clock; the orchestrator records both `producing_clock_at` (producer's UTC) and `received_at` (NATS ingestion UTC). Reconciler uses `received_at` when `producing_clock_at` would create paradoxes.
 
 Setup script verifies `timedatectl show -p NTPSynchronized` returns `yes`.
+
+Implementation note (2026-05-06): `crates/jam-clock-watcher` now implements
+the runtime watcher. It checks `timedatectl show -p NTPSynchronized -p
+SystemClockSynchronized`, fails loudly on malformed output, and emits traced
+`journal.clock.unsynced` when the host clock is not synchronized. A temporary
+NATS smoke verified the emitted `clock.unsynced` journal entry.

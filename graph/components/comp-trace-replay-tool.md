@@ -1,9 +1,9 @@
 ---
 id: comp-trace-replay-tool
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:39:56.161791986Z
-updated: 2026-05-04T04:59:05.510576839Z
+updated: 2026-05-06T21:54:08Z
 edges:
 - target: api-find-traces
   type: exposes
@@ -28,4 +28,4 @@ Walks parent-trace chain up to `max_depth`.
 
 `find-traces(filter)` searches traces matching pattern (e.g., `harness=codex-cli AND outcome=failed AND since=last-7d`).
 
-Implemented by `jam-svc-knowledge` or a small dedicated service.
+Implementation note (2026-05-06): the first durable-journal implementation lives in `crates/jam-ui-server/src/trace_replay.rs` and is reused by both `jam-cli` and `jam-ui-server`. `jam trace replay` reconstructs a parent chain from JSONL journals, while `jam trace find` and `GET /api/traces/find` search grouped trace summaries with the §5.8 filter shape. Tempyr journal, skill-origin, NATS KV snapshot, and rare NATS-only message joins remain future enrichments rather than blockers for the implemented local surface.

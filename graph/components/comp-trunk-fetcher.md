@@ -1,9 +1,9 @@
 ---
 id: comp-trunk-fetcher
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:31:42.626556351Z
-updated: 2026-05-04T04:46:00.812110906Z
+updated: 2026-05-06T07:11:56Z
 edges:
 - target: comp-nats-jetstream
   type: depends_on
@@ -21,3 +21,5 @@ Periodic `git fetch origin --prune` for each project's trunk every 5min (§4.4.6
 Recomputes per-worktree staleness so `world-snapshot.branch_staleness` is fresh without each Maestro session re-fetching.
 
 Crate `crates/jam-trunk-fetcher/` (bin).
+
+Implementation status (2026-05-06): active MVP exists in `crates/jam-trunk-fetcher/`; `jam-svc-observe` reads `branch.staleness-updated` journal entries into `world-snapshot.branch_staleness`.

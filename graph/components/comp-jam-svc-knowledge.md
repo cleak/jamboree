@@ -1,9 +1,9 @@
 ---
 id: comp-jam-svc-knowledge
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:39:34.201855192Z
-updated: 2026-05-04T04:57:08.433226554Z
+updated: 2026-05-06T21:20:00Z
 edges:
 - target: api-query-session-store
   type: exposes
@@ -62,3 +62,5 @@ Tools (§5.5):
 - `tempyr-journal-range(rev-range)`
 
 Owns the inotify watcher on the skills dir; emits `skills.changed{file_path}` (§21.4).
+
+Implementation note (2026-05-06): first crate slice landed at `crates/jam-svc-knowledge/` for skills hot-edit watching only. The broader `tool.knowledge.*` surface remains planned; the watcher responsibility from §21.4 is implemented and smoke-tested by `task-skill-watcher-inotify`.

@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:tempyr.task-updated",
+  "title": "tempyr.task-updated",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "task_id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "task_path": {
+      "type": "string"
+    },
+    "source_event_type": {
+      "type": "string"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "task-lifecycle-handler updated the canonical Tempyr task node for a lifecycle transition.",
+  "required": [
+    "task_id",
+    "status",
+    "task_path",
+    "source_event_type",
+    "updated_at"
+  ]
+}

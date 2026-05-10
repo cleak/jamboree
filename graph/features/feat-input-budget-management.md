@@ -24,3 +24,5 @@ A. **Relevance-scoped skill loading.** `read-skills(scope)` returns only skills 
 B. **Delta snapshots.** First call on a known task uses `world-snapshot-delta(task_id, since=last_seen_for(task_id))`; falls through to full snapshot only if delta is substantial. Per-Maestro-instance "last seen" cursor stored in substrate.
 
 C. **Explicit input budgets.** `~/.jam/config/maestro.toml` declares per-session-input-tokens, per-session-output-tokens, daily-usd, and input-budget caps for skill files / journal replay / world-snapshot. Loader assembles within budget, prioritizing wake context > world-snapshot > scoped skills > journal events.
+
+Implementation note (2026-05-06): explicit input budget assembly is active in the Python Maestro scaffold via `jam_maestro.input_budget`. Delta snapshots remain future work, but the configured budget caps and session-loop reporting are implemented for full snapshots, scoped skills, and journal replay inputs.

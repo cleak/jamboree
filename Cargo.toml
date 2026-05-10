@@ -4,12 +4,36 @@ members = [
     "crates/jam-trace",
     "crates/jam-secrets",
     "crates/jam-events",
+    "crates/jam-clock-watcher",
+    "crates/jam-harness-watcher",
     "crates/jam-journal",
+    "crates/jam-journal-reconciler",
+    "crates/jam-skill-suspicion",
+    "crates/jam-stall-detector",
     "crates/jam-nats",
     "crates/jam-setup",
     "crates/jam-cli",
+    "crates/jam-tools-core",
+    "crates/jam-ntfy-bridge",
     "crates/jam-nats-bridge",
+    "crates/jam-pr-poller",
+    "crates/jam-tempyr-pr-reconciler",
+    "crates/jam-tempyr-write-reconciler",
+    "crates/jam-untrusted",
+    "crates/jam-trunk-fetcher",
+    "crates/jam-task-lifecycle",
+    "crates/jam-patch-agent",
     "crates/jam-svc-observe",
+    "crates/jam-svc-knowledge",
+    "crates/jam-svc-evolve",
+    "crates/jam-svc-message",
+    "crates/jam-svc-repo",
+    "crates/jam-svc-research",
+    "crates/jam-svc-search",
+    "crates/jam-svc-session",
+    "crates/jam-svc-supervise",
+    "crates/jam-svc-worktree",
+    "crates/jam-ui-server",
 ]
 
 [workspace.package]
@@ -38,19 +62,31 @@ doc_markdown = "allow"
 # Shared deps pinned at workspace level so all crates see consistent versions.
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_yaml = "0.9"
 ulid = { version = "1.1", features = ["serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 secrecy = { version = "0.10", features = ["serde"] }
 thiserror = "2.0"
 toml = "0.8"
 regex = "1.11"
-tokio = { version = "1.41", features = ["macros", "rt-multi-thread", "signal", "time"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { version = "1.41", features = ["macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 async-nats = "0.39"
 bytes = "1.8"
 futures = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4.5", features = ["derive"] }
+time = "0.3"
+axum = { version = "0.8", features = ["ws"] }
+base64 = "0.22"
+hex = "0.4"
+jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto", "use_pem"] }
+octocrab = "0.50"
+rand = "0.8"
+sha2 = "0.10"
+rusqlite = { version = "0.32", features = ["bundled"] }
+tower-http = { version = "0.6", features = ["fs", "trace"] }
 
 [profile.release]
 lto = "thin"

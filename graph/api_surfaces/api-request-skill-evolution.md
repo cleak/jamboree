@@ -1,9 +1,9 @@
 ---
 id: api-request-skill-evolution
 type: api_surface
-status: draft
+status: stable
 created: 2026-05-04T03:53:21.802124226Z
-updated: 2026-05-04T04:58:46.767391998Z
+updated: 2026-05-06T21:26:08Z
 edges:
 - target: comp-jam-svc-evolve
   type: exposed_by
@@ -15,3 +15,9 @@ edges:
 Other triggers: periodic (default weekly), `skill.under-suspicion` events.
 
 Output: candidate skill diff at `~/.jam/skills-evolution-candidates/<skill-name>.diff`. Human reviews via `git commit` on skills repo.
+
+Tool request contract now exists in `crates/jam-tools-core/schemas/evolve/`
+and generated Python type `EvolveRequestSkillEvolutionRequest`. Maestro calls
+the route as `request-skill-evolution` with subject
+`tool.evolve.request-skill-evolution`; trace propagation remains via NATS
+headers.

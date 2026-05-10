@@ -1,9 +1,9 @@
 ---
 id: comp-pre-commit-hooks
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:39:48.534157037Z
-updated: 2026-05-04T04:52:07.777354257Z
+updated: 2026-05-06T21:15:00Z
 edges:
 - target: comp-events-toml-and-codegen
   type: depends_on

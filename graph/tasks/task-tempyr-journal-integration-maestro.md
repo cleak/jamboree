@@ -1,9 +1,9 @@
 ---
 id: task-tempyr-journal-integration-maestro
 type: task
-status: backlog
+status: done
 created: 2026-05-04T03:58:30.499959332Z
-updated: 2026-05-04T04:10:18.349350799Z
+updated: 2026-05-06T04:22:45.504836805Z
 edges:
 - target: feat-tempyr-knowledge-and-journal
   type: child_of

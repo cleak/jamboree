@@ -1,9 +1,9 @@
 ---
 id: comp-init-maestro-keyring-sh
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:40:03.119357333Z
-updated: 2026-05-04T05:04:45.891141698Z
+updated: 2026-05-06T21:18:00Z
 edges:
 - target: comp-multi-user-filesystem-layout
   type: depends_on

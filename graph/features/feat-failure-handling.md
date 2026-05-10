@@ -1,7 +1,7 @@
 ---
 id: feat-failure-handling
 type: feature
-status: draft
+status: active
 created: 2026-05-04T03:28:22.014346381Z
 updated: 2026-05-04T04:37:39.570273428Z
 owner: caleb
@@ -46,3 +46,5 @@ Behavioral failures detected by reconcilers (stall-detector, quota-tracker, harn
 What the Maestro cannot recover from (§10.3): worktree-root or config-dir corruption, simultaneous all-LLM-down, NATS data loss, malicious skill content, patch agent's pinned deps broken.
 
 Failure-obvious checklist (§10.4) for implementers: every component refuses-to-start on bad env / missing manifest / NATS unreachable; emits `*.failed` events with `error_kind` + `detail` + `trace_id` + remediation hint; on retry exhaustion emits `*.permanently-failed` and ntfy-escalates; never silently degrades.
+
+Implementation note (2026-05-06): the first human escalation path is active in code: `notify-human` publishes `notify.human`, `jam-ntfy-bridge` posts to ntfy, and the UI notification drawer consumes the same subject. Real phone delivery is still a deployment verification step after ntfy credentials and topic subscription are configured.

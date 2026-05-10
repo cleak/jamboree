@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-tools:observe.query-quota.request",
+  "title": "observe.query-quota request",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "harness_id": { "type": "string", "minLength": 1 }
+  }
+}

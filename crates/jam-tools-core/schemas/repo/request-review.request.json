@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-tools:repo.request-review.request",
+  "title": "repo.request-review request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["pr_ref", "reviewer_id", "worktree_path"],
+  "properties": {
+    "pr_ref": { "type": "string", "minLength": 1 },
+    "reviewer_id": { "type": "string", "minLength": 1 },
+    "task_id": { "type": "string", "minLength": 1 },
+    "repo": { "type": "string", "minLength": 1 },
+    "worktree_path": { "type": "string", "minLength": 1 },
+    "base": { "type": "string", "minLength": 1 }
+  }
+}

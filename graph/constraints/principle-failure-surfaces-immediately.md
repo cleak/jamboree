@@ -35,6 +35,8 @@ edges:
   type: constrains
 - target: comp-search-router
   type: constrains
+- target: comp-tempyr-write-reconciler
+  type: constrains
 - target: comp-ui-session-token-auth
   type: constrains
 - target: comp-worktree-create-protocol

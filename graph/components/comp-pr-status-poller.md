@@ -1,9 +1,9 @@
 ---
 id: comp-pr-status-poller
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:31:43.346629827Z
-updated: 2026-05-04T05:02:36.159466804Z
+updated: 2026-05-06T07:02:18Z
 edges:
 - target: comp-github-app-client
   type: depends_on
@@ -29,3 +29,5 @@ Emits `pr.status-changed`, `pr.review-received`, `pr.ci.status-changed`. ~70% of
 Each polled response that triggers a state change opens its own root trace (`principle-one-trigger-one-trace`) — review-received's trace is rooted at the poller's detection, not the original task spawn (§24.5).
 
 Crate `crates/jam-pr-poller/` (bin).
+
+Implementation status (2026-05-06): active MVP exists in `crates/jam-pr-poller/`. It uses the installed `gh` CLI for this slice; the shared GitHub App client dependency remains the follow-up path for production auth and higher rate limits.

@@ -1,9 +1,9 @@
 ---
 id: comp-tempyr-task-node-shape
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:34:45.124982348Z
-updated: 2026-05-04T04:47:07.317768350Z
+updated: 2026-05-06T21:22:00Z
 edges:
 - target: comp-task-lifecycle-handler
   type: depended_on_by
@@ -49,3 +49,8 @@ merged-sha: null
 Coarse on operational details: number of comments not their content; PR ref not the diff; latest CI status not the history. Fine-grained operational data lives in journal/session-store.
 
 Lifecycle-transition writes only — maybe 5–8 per task across full lifetime. Tempyr isn't optimized for high-write-rate operational state.
+
+Implementation note (2026-05-06): `jam-task-lifecycle` writes Markdown task
+nodes with this operational shape for `picker.spawned`, `pr.opened`,
+`pr.merged`, and `task.abandoned` transitions, scoped to the canonical Tempyr
+worktree task directory.

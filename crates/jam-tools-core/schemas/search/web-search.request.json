@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-tools:search.web-search.request",
+  "title": "search.web-search request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["query"],
+  "properties": {
+    "query": { "type": "string", "minLength": 1 },
+    "intent": { "type": "string", "minLength": 1 },
+    "time_range": { "type": "string", "minLength": 1 },
+    "domains": { "type": "array" }
+  }
+}

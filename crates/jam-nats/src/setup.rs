@@ -144,6 +144,7 @@ pub fn default_streams() -> Vec<StreamSpec> {
         StreamSpec::new("branch", vec!["branch.>".into()]),
         StreamSpec::new("clock", vec!["clock.>".into()]),
         StreamSpec::new("harness", vec!["harness.>".into()]),
+        StreamSpec::new("routing-manifest", vec!["routing-manifest.>".into()]),
         StreamSpec::new("setup", vec!["setup.>".into()]),
         StreamSpec::new("snapshot-invalidate", vec!["snapshot.invalidate.>".into()]),
         StreamSpec::new("notify", vec!["notify.>".into()]),

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-tools:session.spawn-picker.request",
+  "title": "session.spawn-picker request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["task_id"],
+  "properties": {
+    "task_id": { "type": "string", "minLength": 1 },
+    "project": { "type": "string", "minLength": 1 },
+    "harness": { "type": "string", "minLength": 1 },
+    "sandbox_backend": { "type": "string", "minLength": 1 },
+    "sandbox_profile": { "type": "string", "minLength": 1 },
+    "task_class": { "type": "string", "minLength": 1 },
+    "initial_prompt": { "type": "string", "minLength": 1 },
+    "model_override": { "type": "string", "minLength": 1 },
+    "reasoning_effort": { "type": "string", "minLength": 1 },
+    "budget_usd": { "type": "number", "minimum": 0 },
+    "dry_run": { "type": "boolean" }
+  }
+}

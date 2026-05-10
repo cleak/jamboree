@@ -10,3 +10,5 @@ updated: 2026-05-04T03:47:14.405702899Z
 Mitigation: NATS publish wrapper rejects publishes without `trace_id`; event-emit helpers in every service require `trace_id` parameter (no default); `tempyr journal lint` corollary catches single-entry traces; `jam doctor` includes trace propagation health checks; integration tests verify end-to-end trace continuity for a sample task.
 
 Captured as `principle-tracing-chains-end-to-end`.
+
+Mitigation update (2026-05-06): `crates/jam-cli/tests/trace_continuity.rs` now provides the §23.6 Layer 3 integration-test fixture for a fake task from spawn through merge.

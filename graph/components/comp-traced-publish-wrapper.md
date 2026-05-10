@@ -1,9 +1,9 @@
 ---
 id: comp-traced-publish-wrapper
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:39:45.667454909Z
-updated: 2026-05-04T04:24:19.143519559Z
+updated: 2026-05-06T21:15:00Z
 edges:
 - target: feat-trace-propagation
   type: used_by

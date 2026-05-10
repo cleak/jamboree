@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:task.failed",
+  "title": "task.failed",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "task_id": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "detail": {
+      "type": "string"
+    },
+    "failed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "source_event_type": {
+      "type": "string"
+    }
+  },
+  "description": "Task failed before or outside normal Picker exit handling.",
+  "required": [
+    "task_id",
+    "reason",
+    "detail",
+    "failed_at",
+    "source_event_type"
+  ]
+}

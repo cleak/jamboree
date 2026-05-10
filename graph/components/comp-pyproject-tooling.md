@@ -1,9 +1,9 @@
 ---
 id: comp-pyproject-tooling
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:39:48.116714014Z
-updated: 2026-05-04T04:52:16.785831113Z
+updated: 2026-05-06T21:15:00Z
 edges:
 - target: comp-untrusted-string-newtype
   type: depends_on

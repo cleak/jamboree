@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:worktree.created",
+  "title": "worktree.created",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "task_id": {
+      "type": "string"
+    },
+    "project": {
+      "type": "string"
+    },
+    "repo_path": {
+      "type": "string"
+    },
+    "worktree_path": {
+      "type": "string"
+    },
+    "branch": {
+      "type": "string"
+    },
+    "trunk_ref": {
+      "type": "string"
+    },
+    "trunk_sha": {
+      "type": "string"
+    },
+    "fetched": {
+      "type": "boolean"
+    },
+    "branched_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "fetch_cursor_at_create": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "jam-svc-worktree created a Picker worktree from origin/<trunk> (\u00a76.9).",
+  "required": [
+    "task_id",
+    "project",
+    "repo_path",
+    "worktree_path",
+    "branch",
+    "trunk_ref",
+    "trunk_sha",
+    "fetched",
+    "branched_at",
+    "fetch_cursor_at_create"
+  ]
+}

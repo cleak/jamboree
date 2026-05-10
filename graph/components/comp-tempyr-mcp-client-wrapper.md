@@ -1,9 +1,9 @@
 ---
 id: comp-tempyr-mcp-client-wrapper
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:34:45.952494356Z
-updated: 2026-05-04T04:59:41.114607840Z
+updated: 2026-05-06T21:18:00Z
 edges:
 - target: api-tempyr-journal-entry-kinds
   type: exposes
@@ -38,3 +38,8 @@ def journal_log(kind, fields, tags=None, ctx=current_trace_ctx()):
 Direct CLI use of `tempyr journal log` from outside the orchestrator (e.g., a human running it manually) won't auto-tag — those entries are manually-taggable.
 
 Lives at `maestro/src/jam_maestro/tempyr_journal.py`. Also exposes `journal_search`/`journal_blame`/`journal_range` wrappers.
+
+Implementation note (2026-05-06): the Python wrapper is active for Maestro
+journaling and the generated knowledge tools. `CliTempyrJournal` writes
+structured entries with trace tags, and `tempyr_journal_search` /
+`tempyr_journal_blame` / `tempyr_journal_range` provide typed query wrappers.

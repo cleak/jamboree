@@ -1,9 +1,9 @@
 ---
 id: comp-rollback-flow
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:39:54.869212908Z
-updated: 2026-05-04T04:48:32.263183368Z
+updated: 2026-05-06T09:00:26Z
 edges:
 - target: comp-patch-agent
   type: depended_on_by
@@ -27,3 +27,5 @@ If post-patch health checks fail (§20.4):
 Old service stays alive in the swap window. If health checks fail, point manifest back at it. No state migration needed because subject-prefix-based routing means old and new can coexist.
 
 For services where keeping the old version alive is wasteful (e.g., 2GB-memory observe service): old version is killed at `swap_window_secs` after the patch (default 300s). After that, rollback requires re-launching the old binary from disk — slower but still automatic.
+
+Implementation status (2026-05-06): the mechanical manifest rollback path is active through `jam patch rollback`. It performs KV-history lookup and CAS restore, plus `routing-manifest.updated` and `patch.rolled-back` publication. Automatic patch-agent triggering and service drain/self-shutdown behavior remain separate tasks.

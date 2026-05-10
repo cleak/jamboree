@@ -28,11 +28,19 @@
 
 mod client;
 mod headers;
+mod routing_manifest;
 mod setup;
 
 pub use client::{JamNats, NatsError};
 pub use headers::{
     build_trace_headers, extract_trace_from_headers, PARENT_TRACE_ID_HEADER, TRACE_ID_HEADER,
+};
+pub use routing_manifest::{
+    default_subject_prefix, load_current_routing_manifest, load_routing_manifest_revision,
+    manifest_id_for_revision, revision_from_manifest_id, version_subject_suffix,
+    write_current_routing_manifest, RoutingManifest, RoutingManifestEntry, RoutingService,
+    ROUTING_MANIFEST_BUCKET, ROUTING_MANIFEST_KEY, ROUTING_MANIFEST_SCHEMA_VERSION,
+    ROUTING_MANIFEST_UPDATED_SUBJECT,
 };
 pub use setup::{
     default_kv_buckets, default_streams, ensure_kv_buckets, ensure_streams, KvBucketSpec,

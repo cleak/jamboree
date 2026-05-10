@@ -1,14 +1,16 @@
 ---
 id: feat-tempyr-consistency-model
 type: feature
-status: draft
+status: active
 created: 2026-05-04T03:28:18.262461217Z
-updated: 2026-05-04T04:10:36.328014279Z
+updated: 2026-05-06T10:27:17.468744582Z
 owner: caleb
 edges:
 - target: comp-tempyr-mcp-client-wrapper
   type: uses
 - target: comp-tempyr-pr-reconciler
+  type: uses
+- target: comp-tempyr-write-reconciler
   type: uses
 - target: jamboree-v5
   type: child_of
@@ -30,3 +32,5 @@ Three drift sources, three handling strategies (§4.6.4):
    - Proactive: `tempyr-pr-reconciler` on `pr.merged` looks at touched paths and queries Tempyr for nodes referencing them; auto-emits `tempyr-update-candidate`.
 
 Source of truth is the journal + Tempyr's own journal; convergence is reconciler-driven; resolution is human (or Maestro-session) review of candidate queue. We never auto-update Tempyr from candidate flags.
+
+Implementation note (2026-05-06): `comp-tempyr-write-reconciler` implements the write side-effect retry lane for `tempyr.write-pending` → `tempyr.write-confirmed` / `tempyr.write-permanently-failed`, with ntfy escalation represented by traced `notify.human` publication.

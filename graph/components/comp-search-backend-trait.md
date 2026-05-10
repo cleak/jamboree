@@ -1,9 +1,9 @@
 ---
 id: comp-search-backend-trait
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:34:50.252455919Z
-updated: 2026-05-04T05:00:18.166962268Z
+updated: 2026-05-06T22:20:25Z
 edges:
 - target: api-search-backend-contract
   type: exposes
@@ -28,27 +28,20 @@ edges:
 - target: feat-search-router
   type: used_by
 ---
-Trait every search backend implements (§4.8, §19.2):
+Shared contract every search backend implements (§4.8, §19.2), now defined in `crates/jam-tools-core/src/contracts.rs`:
 
 ```rust
 pub trait SearchBackend: Send + Sync {
     fn id(&self) -> BackendId;
     fn capabilities(&self) -> SearchCapabilities;
-    fn search(&self, query: SearchQuery) -> Result<SearchResults>;
-    fn extract(&self, urls: &[Url]) -> Result<Vec<ExtractedContent>>;
-    fn crawl(&self, root: &Url, opts: CrawlOpts) -> Result<CrawlResults>;
+    fn search(&self, query: SearchQuery) -> ContractResult<SearchResults>;
+    fn extract(&self, urls: &[String]) -> ContractResult<Vec<ExtractedContent>>;
+    fn crawl(&self, root: &str, opts: CrawlOpts) -> ContractResult<CrawlResults>;
     fn cost_estimate(&self, query: &SearchQuery) -> Cost;
     fn latency_p50_ms(&self) -> u32;
 }
 
 pub struct SearchCapabilities {
-    pub search: bool,
-    pub extract: bool,
-    pub crawl: bool,
-    pub semantic: bool,
-    pub synthesized_answer: bool,
-    pub time_filtering: bool,
-    pub domain_filtering: bool,
-    pub javascript_rendering: bool,
+    pub features: Vec<SearchCapability>,
 }
 ```

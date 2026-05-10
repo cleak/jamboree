@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:quota.usage-observed",
+  "title": "quota.usage-observed",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "harness": {
+      "type": "string"
+    },
+    "window_kind": {
+      "type": "string"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "provider": {
+      "type": "string"
+    },
+    "model": {
+      "type": "string"
+    },
+    "input_tokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "output_tokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "cost_usd": {
+      "type": "number"
+    },
+    "source": {
+      "type": "string"
+    },
+    "observed_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "Process-side harness usage parsed from harness JSON logs or response metadata.",
+  "required": [
+    "harness",
+    "window_kind",
+    "session_id",
+    "task_id",
+    "source",
+    "observed_at"
+  ]
+}

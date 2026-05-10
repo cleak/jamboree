@@ -1,9 +1,9 @@
 ---
 id: comp-maestro-wake-handler
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:31:29.388180038Z
-updated: 2026-05-04T04:33:39.370440882Z
+updated: 2026-05-06T21:15:00Z
 edges:
 - target: comp-nats-jetstream
   type: depends_on
@@ -14,4 +14,7 @@ Subscribes to NATS subjects per §4.1.1 and opens a Maestro session per wake. So
 
 Each wake opens a new `trace_id` (§23) inherited from message headers when applicable. Trace travels through every tool call and Tempyr journal entry the session emits.
 
-Implementation entrypoint: `maestro/src/jam_maestro/wake_handler.py::on_wake`. The wake handler builds a `TraceCtx` from headers and runs the session within `maestro_session(session_id, trace_ctx)` async context manager (§24.1).
+Implementation note (2026-05-06): `maestro/src/jam_maestro/wake.py` parses
+traced `journal.task.requested` wake events, and `python -m jam_maestro
+wake-once` / `listen` consume them from NATS before handing them to
+`MaestroSessionLoop`. Broader non-task wake subjects remain future hardening.

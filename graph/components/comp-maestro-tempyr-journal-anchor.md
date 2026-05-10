@@ -1,9 +1,9 @@
 ---
 id: comp-maestro-tempyr-journal-anchor
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:31:30.488684421Z
-updated: 2026-05-04T04:33:18.525349968Z
+updated: 2026-05-06T21:18:00Z
 edges:
 - target: comp-maestro-session-loop
   type: depended_on_by
@@ -20,3 +20,8 @@ Each Maestro wake opens a fresh Tempyr session because the agent identifier is u
 Decisions land as `decision` entries (Tempyr's `chosen`/`rationale`/`reversible` required, `detail` ≥ 50 chars). Findings land as `finding`. Failed tool-call approaches land as `dead_end` with implicating skill tagged.
 
 Why anchor here: Maestro doesn't naturally have a worktree; canonical worktree is the obvious anchor (orchestrator owns it; Tempyr's task graph nodes live there; persists across reboots).
+
+Implementation note (2026-05-06): `MaestroSessionLoop` opens and finalizes
+Tempyr journal sessions through `CliTempyrJournal`, using a per-wake agent id
+and recording decisions / outcomes tagged with the active trace. Unit and NATS
+smoke coverage verify decisions are journaled during task wakes.

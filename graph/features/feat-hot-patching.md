@@ -1,9 +1,9 @@
 ---
 id: feat-hot-patching
 type: feature
-status: draft
+status: active
 created: 2026-05-04T03:28:23.301350177Z
-updated: 2026-05-04T05:05:42.162164116Z
+updated: 2026-05-06T16:06:41Z
 owner: caleb
 edges:
 - target: comp-atomic-swap-procedure
@@ -52,3 +52,5 @@ Atomic upgrade of tool services without restarting the Maestro or impacting in-f
 **Patch agent** (§20.5, separate Rust crate, pinned deps `tokio`, `serde`, `tracing`, `nats`, `octocrab`, one LLM client): deterministic checks (cheap, ~80% of failures) → mechanical rollback → LLM diagnosis ($0.50 budget cap, single-turn) → ntfy escalation with incident dump (`~/.jam/incidents/<id>/`).
 
 Reentrancy: one patch in flight at a time, NATS KV `patch-lock` bucket TTL 5min.
+
+Implementation status (2026-05-06): the routing-manifest schema, `jam patch apply`, `jam patch rollback`, atomic-swap drain, and `jam-patch-agent` recovery loop are active. The implementation covers staged-binary copy, versioned candidate launch, pre-swap health gating, manifest CAS update, KV-history rollback, `routing-manifest.updated`, `patch.applied`, `patch.confirmed`, `patch.rolled-back`, `patch.rolled-back-successfully`, `patch.failed`, lock acquisition/release through `patch-lock/current`, Maestro observe routing through the current prefix, versioned subject-prefix subscriptions for request-reply tool services, old-service drain signaling, rollback-route relaunch after drain, deterministic patch-agent checks, LLM command-hook escalation with one suggested recovery action and health recheck, incident dumps, critical `notify.human`, dispatch pause on unrecoverable patch failure, and the mid-session atomic-swap plus patch-agent recovery smoke proofs.

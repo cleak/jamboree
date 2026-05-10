@@ -1,0 +1,34 @@
+[package]
+name = "jam-svc-knowledge"
+description = "Knowledge service slice for skills hot-edit watching (§21.4)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "jam-svc-knowledge"
+path = "src/main.rs"
+
+[dependencies]
+chrono = { workspace = true }
+clap = { workspace = true }
+inotify = "0.11.1"
+jam-events = { path = "../jam-events" }
+jam-nats = { path = "../jam-nats" }
+jam-tools-core = { path = "../jam-tools-core" }
+jam-trace = { path = "../jam-trace" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.14"
+
+[lints]
+workspace = true

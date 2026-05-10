@@ -1,9 +1,9 @@
 ---
 id: api-tempyr-journal-entry-kinds
 type: api_surface
-status: draft
+status: stable
 created: 2026-05-04T03:53:53.769177869Z
-updated: 2026-05-04T04:59:41.114608355Z
+updated: 2026-05-06T22:14:20Z
 edges:
 - target: comp-tempyr-mcp-client-wrapper
   type: exposed_by
@@ -27,3 +27,5 @@ Hybrid retrieval: BM25 + vec0 vector search + RRF + recency weighting + kind boo
 Git-ref publishing: `tempyr journal flush` publishes session as `refs/tempyr/journals/archive/<YYYY>/<MM>/<DD>/<id>` (§22.1).
 
 Lint: `tempyr journal lint` flags inconsistencies; `jam doctor` runs trace-gap detection corollary (§22.8).
+
+Implementation note (2026-05-06): `jam_maestro.tempyr_journal` now models all eight Tempyr journal entry kinds as typed Pydantic contracts (`PlanEntry`, `FindingEntry`, `AssumptionEntry`, `QuestionEntry`, `DecisionEntry`, `DeadEndEntry`, `RiskEntry`, `OutcomeEntry`) and exposes `CliTempyrJournal.log_entry(agent, entry)`. The wrapper invokes `tempyr journal log` without a shell, preserves existing `log_decision`/`log_outcome` callers, and validates the detail-required `decision` / `dead_end` shapes before hitting Tempyr.

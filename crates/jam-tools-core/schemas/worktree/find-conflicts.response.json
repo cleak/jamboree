@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-tools:worktree.find-conflicts.response",
+  "title": "worktree.find-conflicts response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["worktree_path", "target_ref", "conflicting_paths"],
+  "properties": {
+    "worktree_path": { "type": "string", "minLength": 1 },
+    "target_ref": { "type": "string", "minLength": 1 },
+    "conflicting_paths": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    }
+  }
+}

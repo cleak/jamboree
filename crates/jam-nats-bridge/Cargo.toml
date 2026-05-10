@@ -23,6 +23,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 jam-journal = { path = "../jam-journal" }
 jam-nats = { path = "../jam-nats" }
+jam-tools-core = { path = "../jam-tools-core" }
 
 [dev-dependencies]
 tempfile = "3.10"

@@ -1,9 +1,9 @@
 ---
 id: feat-observation-tool-service
 type: feature
-status: draft
+status: active
 created: 2026-05-04T03:28:16.305087842Z
-updated: 2026-05-04T04:09:34.266171456Z
+updated: 2026-05-06T19:55:00Z
 owner: caleb
 edges:
 - target: comp-branch-staleness
@@ -37,3 +37,9 @@ Rust process `jam-svc-observe` (NATS subject prefix `tool.observe.*`) that compi
 - `compute-readiness`, `list-blockers`, `list-review-artifacts`, `classify-review-artifacts`, `query-quota`, `world-snapshot-delta`, `branch-staleness`.
 
 Cache layer with **event-driven invalidation backed by 60s TTL** (§4.2.1, §21.2). Each data source carries a `freshness` tag.
+
+Implementation note (2026-05-06): the service now has active implementations
+for `world-snapshot`, `compute-readiness`, `list-blockers`,
+`branch-staleness`, `query-quota`, `classify-review-artifacts`, and
+`list-review-artifacts`. `world-snapshot-delta` remains the deferred cursor
+surface.

@@ -126,6 +126,7 @@ Next: populate the orchestrator's secrets (security-setup.md §5.3).
 Each command prompts for the secret; -m means multi-line (paste, then Ctrl+D):
 
     pass insert    jam/pickers/github-app-id
+    pass insert    jam/pickers/github-app-installation-id
     pass insert -m jam/pickers/github-app-key
     pass insert    jam/search/brave
     pass insert    jam/search/firecrawl
@@ -140,6 +141,7 @@ Verify with:
 
     pass list
     pass show jam/pickers/github-app-id
+    pass show jam/pickers/github-app-installation-id
 EOF
 }
 

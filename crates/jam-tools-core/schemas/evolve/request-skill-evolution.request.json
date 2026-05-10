@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-tools:evolve.request-skill-evolution.request",
+  "title": "evolve.request-skill-evolution request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["skill_name"],
+  "properties": {
+    "skill_name": { "type": "string", "minLength": 1 },
+    "eval_source": { "type": "string", "minLength": 1 },
+    "reason": { "type": "string", "minLength": 1 }
+  }
+}

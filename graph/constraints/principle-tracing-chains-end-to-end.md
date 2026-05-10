@@ -51,6 +51,8 @@ edges:
   type: constrains
 - target: comp-tempyr-pr-reconciler
   type: constrains
+- target: comp-tempyr-write-reconciler
+  type: constrains
 - target: comp-trace-gap-detector
   type: constrains
 - target: comp-trace-replay-tool

@@ -1,9 +1,9 @@
 ---
 id: comp-supervisor-process-compose
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:31:46.291856720Z
-updated: 2026-05-04T04:51:32.916540444Z
+updated: 2026-05-06T20:16:21Z
 edges:
 - target: comp-multi-user-filesystem-layout
   type: depends_on
@@ -37,3 +37,10 @@ processes:
 ```
 
 `user:` directive requires process-compose to launch as root or via `sudo`; subprocesses run as the declared user.
+
+Implementation status (2026-05-06): `process-compose.yaml` is present at the repo root with explicit `user: maestro` on all 24 declared processes and global `HOME`/`JAM_HOME` pointed at `/home/maestro`. The live service enablement set is still incremental; disabled future services retain the user directive so they are safe when enabled.
+
+Operator note (2026-05-06): launch the supervisor itself with
+`sudo /opt/jam/bin/process-compose up -f /home/caleb/jamboree/process-compose.yaml`.
+Do not run process-compose as `maestro`; it must start as root so it can apply
+the per-process `user: maestro` drops.

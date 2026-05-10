@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-tools:observe.world-snapshot-delta.response",
+  "title": "observe.world-snapshot-delta response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["task_id", "captured_at", "trace_id", "full", "reason", "changed_fields"],
+  "properties": {
+    "task_id": { "type": "string", "minLength": 1 },
+    "captured_at": { "type": "string", "format": "date-time" },
+    "trace_id": { "type": "string", "minLength": 26, "maxLength": 26 },
+    "since": { "type": "string", "format": "date-time" },
+    "baseline_captured_at": { "type": "string", "format": "date-time" },
+    "full": { "type": "boolean" },
+    "reason": { "type": "string", "minLength": 1 },
+    "changed_fields": { "type": "object", "additionalProperties": true }
+  }
+}

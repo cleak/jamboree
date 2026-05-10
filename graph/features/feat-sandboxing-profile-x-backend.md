@@ -3,7 +3,7 @@ id: feat-sandboxing-profile-x-backend
 type: feature
 status: draft
 created: 2026-05-04T03:28:21.197781746Z
-updated: 2026-05-04T04:35:51.205355924Z
+updated: 2026-05-06T16:33:35Z
 owner: caleb
 edges:
 - target: api-sandbox-backend-contract
@@ -61,3 +61,5 @@ Resource limits via cgroup v2 for local (§6.4): CPU/memory/I/O per task class.
 Build cache strategy (§6.5): shared `target/` + sccache + Mold linker for Bevy compile times.
 
 Path safety invariants (§6.6) + concurrency caps (§6.7).
+
+Implementation note (2026-05-06): the Docker backend path has landed for `default × docker` and `hardened × docker`, and local-backend Pickers now receive cgroup v2 resource scopes. The live smokes prove default container launch, hardened outbound blocking, task-class CPU/memory/I/O limits, and hard FS/network isolation. The compile-heavy Docker benchmark uses `/home/caleb/blueberry` with `blueberry-ops-base:latest` and measured 7.4% overhead against the 25% acceptance threshold.

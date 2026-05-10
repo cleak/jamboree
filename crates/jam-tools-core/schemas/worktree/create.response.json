@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-tools:worktree.create.response",
+  "title": "worktree.create response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["task_id", "project", "repo_path", "worktree_path", "branch", "trunk_ref", "trunk_sha", "fetched", "branched_at", "fetch_cursor_at_create", "trace_id"],
+  "properties": {
+    "task_id": { "type": "string", "minLength": 1 },
+    "project": { "type": "string", "minLength": 1 },
+    "repo_path": { "type": "string", "minLength": 1 },
+    "worktree_path": { "type": "string", "minLength": 1 },
+    "branch": { "type": "string", "minLength": 1 },
+    "trunk_ref": { "type": "string", "minLength": 1 },
+    "trunk_sha": { "type": "string", "minLength": 1 },
+    "fetched": { "type": "boolean" },
+    "branched_at": { "type": "string", "format": "date-time" },
+    "fetch_cursor_at_create": { "type": "string", "format": "date-time" },
+    "trace_id": { "type": "string", "minLength": 26, "maxLength": 26 }
+  }
+}

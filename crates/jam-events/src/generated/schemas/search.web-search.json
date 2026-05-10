@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:search.web-search",
+  "title": "search.web-search",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "query": {
+      "type": "string"
+    },
+    "backend": {
+      "type": "string"
+    },
+    "routing_reason": {
+      "type": "string"
+    },
+    "result_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "Search router completed a web-search call and recorded routing transparency (\u00a74.8).",
+  "required": [
+    "query",
+    "backend",
+    "routing_reason",
+    "result_count",
+    "ts"
+  ]
+}

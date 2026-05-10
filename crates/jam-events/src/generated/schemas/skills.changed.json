@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:skills.changed",
+  "title": "skills.changed",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "file_path": {
+      "type": "string"
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "Skills watcher observed a skill file create, write, move, or delete (\u00a721.4).",
+  "required": [
+    "file_path",
+    "ts"
+  ]
+}

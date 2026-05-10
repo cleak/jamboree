@@ -1,9 +1,9 @@
 ---
 id: comp-docker-sandbox-backend
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:39:24.201769451Z
-updated: 2026-05-04T05:04:17.978786073Z
+updated: 2026-05-06T16:22:49Z
 edges:
 - target: comp-sandbox-backend-trait
   type: depends_on
@@ -33,3 +33,5 @@ Default for unattended overnight runs (`default × docker`). Hardened-architectu
 Resource flags: `--cpus`, `--memory`, `--blkio-weight` (§6.4).
 
 Boundary discipline (§17.3): we expose `SandboxBackend::Docker` from our own code; underlying flags happen to match Hermes' choices. If Hermes' Docker backend pivots, we don't have to follow.
+
+Implementation note (2026-05-06): `crates/jam-svc-session` exposes the Docker backend through `spawn-picker`. The first implementation wraps the existing harness argv in `docker run --rm -i --init --read-only`, mounts the Picker worktree at `/work:rw`, mounts the worktree git common dir at `/repo.git:ro`, sets `--network=bridge` for `default` and `--network=none` for `hardened`, passes only the Picker env allowlist via `--env`, and labels containers with `org.jamboree.task` / `org.jamboree.session`. The smoke `scripts/smoke-docker-sandbox-backend.sh` proves the `default × docker` path with live NATS and an Alpine dry-run Picker, then proves the hardened network profile by attempting `wget http://example.org` and recording `network_blocked=1`. The companion benchmark `scripts/bench-docker-sandbox-compile.sh` uses the Blueberry repo and `blueberry-ops-base:latest` to keep compile-heavy overhead under 25%; the accepted run measured 7.4%.

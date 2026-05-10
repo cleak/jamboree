@@ -1,9 +1,9 @@
 ---
 id: feat-search-router
 type: feature
-status: draft
+status: active
 created: 2026-05-04T03:28:18.941829027Z
-updated: 2026-05-04T04:38:23.257848363Z
+updated: 2026-05-06T23:11:01Z
 owner: caleb
 edges:
 - target: api-search-backend-contract
@@ -52,3 +52,8 @@ Backends configured per-deploy: Brave (latency leader), Firecrawl (search+extrac
 Cooldown: 1h after any backend failure (matches `hermes-web-search-plus`). Failed backend skipped from routing until cooldown expires; if all in chain fail, surface error rather than silently degrading (§2.12).
 
 Routing transparency: every response carries a `routing` envelope explaining backend and reason; logged to journal for skill-evolution training data.
+
+Implementation note (2026-05-06): `jam-svc-search` now implements the active v1
+router: Brave default search with cooldown, optional SearXNG and Linkup
+`web-search` routes by explicit backend or intent, direct fetch extraction/crawl,
+and Firecrawl for JavaScript-capable extraction/crawl.

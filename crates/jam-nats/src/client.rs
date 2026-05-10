@@ -100,6 +100,33 @@ impl JamNats {
             .publish_with_headers(subject.into(), headers, bytes.into())
             .await
             .map_err(|e| NatsError::Publish(e.to_string()))?;
+        self.client
+            .flush()
+            .await
+            .map_err(|e| NatsError::Publish(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Publish already-serialized bytes to `subject` with trace headers.
+    ///
+    /// Used by request-reply services that have already constructed a JSON
+    /// response envelope and need to answer an inbox subject without losing
+    /// trace propagation (§2.13).
+    pub async fn publish_bytes_traced(
+        &self,
+        subject: impl Into<String>,
+        payload: bytes::Bytes,
+        ctx: &TraceCtx,
+    ) -> Result<(), NatsError> {
+        let headers = build_trace_headers(ctx);
+        self.client
+            .publish_with_headers(subject.into(), headers, payload)
+            .await
+            .map_err(|e| NatsError::Publish(e.to_string()))?;
+        self.client
+            .flush()
+            .await
+            .map_err(|e| NatsError::Publish(e.to_string()))?;
         Ok(())
     }
 

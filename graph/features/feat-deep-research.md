@@ -32,8 +32,10 @@ Tiered access to provider research engines (§4.10). We don't build research inf
 Tiers:
 - `Quick`: Tavily /research, ~$0.01-0.05, 5-30s.
 - `Standard`: Perplexity Sonar Pro, ~$0.10-0.50, 30-120s.
-- `Deep`: Exa Deep Research / Parallel Pro, ~$1-5, 5-15min.
+- `Deep`: Exa deep-reasoning search / Parallel Pro, ~$1-5, 5-15min.
 
 Output convention (regardless of provider) at `~/.jam/research/<task-id>/`: `report.md`, `findings.json`, `sources.jsonl`, `transcript.jsonl`, `metadata.json`.
 
 On completion, `research-completion-handler` reads `findings.json` and creates a Tempyr research node with stable ID, then emits `research.completed`. Other tasks can `query-tempyr` for it; the Maestro can cite it in Picker prompts.
+
+Implementation note (2026-05-06): the traced research service boundary and output convention are in place. Fake-provider smoke coverage proves `request-research`, research output files, journal landing, and Tempyr note creation via `JAM_RESEARCH_TEMPYR_GRAPH_DIR`. Real HTTP adapter code now exists for Tavily, Perplexity/Sonar, Exa deep-reasoning search, and Parallel Pro, with mock tests for each provider family. Real provider execution remains blocked on provider credentials.

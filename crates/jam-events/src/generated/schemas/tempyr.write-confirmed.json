@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:tempyr.write-confirmed",
+  "title": "tempyr.write-confirmed",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "write_id": {
+      "type": "string"
+    },
+    "node_id": {
+      "type": "string"
+    },
+    "operation": {
+      "type": "string"
+    },
+    "attempts": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "Tempyr accepted a queued write side-effect after retry (\u00a74.6.4).",
+  "required": [
+    "write_id",
+    "node_id",
+    "operation",
+    "attempts",
+    "ts"
+  ]
+}

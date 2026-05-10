@@ -1,9 +1,9 @@
 ---
 id: comp-review-artifact-classifier
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:31:33.984416565Z
-updated: 2026-05-04T04:06:05.687373850Z
+updated: 2026-05-06T19:40:00Z
 edges:
 - target: feat-observation-tool-service
   type: used_by
@@ -25,3 +25,10 @@ pub struct ReviewArtifact {
 ```
 
 `Untrusted<String>` newtype prevents the body from accidental shell or system-prompt injection (§11.2.4).
+
+Implementation note (2026-05-06): `jam-svc-observe` provides the active
+classifier path for this slice. It is deterministic rather than LLM-backed:
+review bodies are wrapped as `Untrusted<String>` for analysis, output keeps
+`body_trust: untrusted`, and classifications include `kind`, `intent`,
+`actionability`, `risk`, and `suspicious`. The LLM cheap-model refinement
+remains a later adapter layer.

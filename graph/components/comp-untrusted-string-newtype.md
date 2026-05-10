@@ -1,9 +1,9 @@
 ---
 id: comp-untrusted-string-newtype
 type: component
-status: planned
+status: active
 created: 2026-05-04T03:39:29.653623290Z
-updated: 2026-05-04T05:05:32.522933001Z
+updated: 2026-05-06T09:22:22Z
 edges:
 - target: comp-pyproject-tooling
   type: depended_on_by
@@ -42,3 +42,5 @@ Sources of untrusted content (§6.1):
 - Email/chat content (when MCP integrations enabled).
 
 Tools that take `Untrusted[str]` know to never format into a shell command, never put directly in a system prompt, never log without redaction.
+
+Implementation note (2026-05-06): Rust support lives in `crates/jam-untrusted`; Python support lives in `maestro/src/jam_maestro/untrusted.py`. Rust uses the absence of `Display`/`Deref` as a stronger compile-time guard than a lint for direct formatting. Python tool boundaries should require `TrustedText`, with conversion from `Untrusted` only through `trust_after_review`.

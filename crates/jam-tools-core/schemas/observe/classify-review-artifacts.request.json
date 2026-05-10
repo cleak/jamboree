@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-tools:observe.classify-review-artifacts.request",
+  "title": "observe.classify-review-artifacts request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifacts"],
+  "properties": {
+    "artifacts": { "type": "array" },
+    "pr_ref": { "type": "string", "minLength": 1 }
+  }
+}

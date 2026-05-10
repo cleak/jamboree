@@ -129,6 +129,47 @@ fields = [
     { name = "abandoned_at", type = "datetime", required = true },
 ]
 
+[events."task.failed"]
+version = 1
+description = "Task failed before or outside normal Picker exit handling."
+fields = [
+    { name = "task_id",           type = "string",   required = true },
+    { name = "reason",            type = "string",   required = true },
+    { name = "detail",            type = "string",   required = true },
+    { name = "failed_at",         type = "datetime", required = true },
+    { name = "source_event_type", type = "string",   required = true },
+]
+
+[events."tempyr.task-updated"]
+version = 1
+description = "task-lifecycle-handler updated the canonical Tempyr task node for a lifecycle transition."
+fields = [
+    { name = "task_id",           type = "string",   required = true },
+    { name = "status",            type = "string",   required = true },
+    { name = "task_path",         type = "path",     required = true },
+    { name = "source_event_type", type = "string",   required = true },
+    { name = "updated_at",        type = "datetime", required = true },
+]
+
+
+# ─── Worktree lifecycle ────────────────────────────────────────────────
+
+[events."worktree.created"]
+version = 1
+description = "jam-svc-worktree created a Picker worktree from origin/<trunk> (§6.9)."
+fields = [
+    { name = "task_id",                  type = "string",   required = true },
+    { name = "project",                  type = "string",   required = true },
+    { name = "repo_path",                type = "path",     required = true },
+    { name = "worktree_path",            type = "path",     required = true },
+    { name = "branch",                   type = "string",   required = true },
+    { name = "trunk_ref",                type = "string",   required = true },
+    { name = "trunk_sha",                type = "string",   required = true },
+    { name = "fetched",                  type = "bool",     required = true },
+    { name = "branched_at",              type = "datetime", required = true },
+    { name = "fetch_cursor_at_create",   type = "datetime", required = true },
+]
+
 
 # ─── PR / CI events ────────────────────────────────────────────────────
 
@@ -153,6 +194,17 @@ fields = [
     { name = "reviewer",     type = "string",   required = true },
     { name = "artifact_count", type = "u32",    required = true },
     { name = "received_at",  type = "datetime", required = true },
+]
+
+[events."pr.status-changed"]
+version = 1
+description = "pr-status-poller observed PR state or draft status change."
+fields = [
+    { name = "pr_ref",     type = "string",   required = true },
+    { name = "task_id",    type = "string",   required = true },
+    { name = "state",      type = "string",   required = true },
+    { name = "draft",      type = "bool",     required = true },
+    { name = "changed_at", type = "datetime", required = true },
 ]
 
 [events."pr.ci.status-changed"]
@@ -278,18 +330,46 @@ fields = [
     { name = "ts",          type = "datetime", required = true },
 ]
 
+[events."quota.usage-observed"]
+version = 1
+description = "Process-side harness usage parsed from harness JSON logs or response metadata."
+fields = [
+    { name = "harness",       type = "string",   required = true },
+    { name = "window_kind",   type = "string",   required = true },
+    { name = "session_id",    type = "string",   required = true },
+    { name = "task_id",       type = "string",   required = true },
+    { name = "provider",      type = "string",   required = false },
+    { name = "model",         type = "string",   required = false },
+    { name = "input_tokens",  type = "u64",      required = false },
+    { name = "output_tokens", type = "u64",      required = false },
+    { name = "cost_usd",      type = "f64",      required = false },
+    { name = "source",        type = "string",   required = true },
+    { name = "observed_at",   type = "datetime", required = true },
+]
+
 
 # ─── Patch agent events ────────────────────────────────────────────────
 
 [events."patch.staged"]
 version = 1
-description = "New binary present in ~/.jam/staging/ — patch-agent will pick this up."
+description = "New binary at staging_path is ready — patch-agent runs §20.3 next."
 fields = [
     { name = "service",       type = "string",   required = true },
     { name = "version",       type = "string",   required = true },
     { name = "staging_path",  type = "path",     required = true },
     { name = "binary_sha256", type = "string",   required = true },
+    { name = "requested_by",  type = "string",   required = true },
     { name = "ts",            type = "datetime", required = true },
+]
+
+[events."patch.rollback-requested"]
+version = 1
+description = "Caller asks the patch-agent to roll back a service to the previous routing manifest revision (§20.4)."
+fields = [
+    { name = "service",      type = "string",   required = true },
+    { name = "reason",       type = "string",   required = true },
+    { name = "requested_by", type = "string",   required = true },
+    { name = "ts",           type = "datetime", required = true },
 ]
 
 [events."patch.applied"]
@@ -370,15 +450,39 @@ fields = [
     { name = "ts",      type = "datetime", required = true },
 ]
 
+[events."tempyr.write-pending"]
+version = 1
+description = "A trusted orchestrator component queued a Tempyr write side-effect for retry (§4.6.4)."
+fields = [
+    { name = "write_id",     type = "string",   required = true },
+    { name = "node_id",      type = "string",   required = true },
+    { name = "operation",    type = "string",   required = true },
+    { name = "request_path", type = "path",     required = true },
+    { name = "ts",           type = "datetime", required = true },
+]
+
+[events."tempyr.write-confirmed"]
+version = 1
+description = "Tempyr accepted a queued write side-effect after retry (§4.6.4)."
+fields = [
+    { name = "write_id",  type = "string",   required = true },
+    { name = "node_id",   type = "string",   required = true },
+    { name = "operation", type = "string",   required = true },
+    { name = "attempts",  type = "u32",      required = true },
+    { name = "ts",        type = "datetime", required = true },
+]
+
 [events."tempyr.write-permanently-failed"]
 version = 1
 description = "Retry exhausted on a Tempyr write — needs human (§4.6.4)."
 fields = [
-    { name = "node_id",    type = "string",   required = true },
-    { name = "operation",  type = "string",   required = true },
-    { name = "last_error", type = "string",   required = true },
-    { name = "attempts",   type = "u32",      required = true },
-    { name = "ts",         type = "datetime", required = true },
+    { name = "write_id",     type = "string",   required = false },
+    { name = "node_id",      type = "string",   required = true },
+    { name = "operation",    type = "string",   required = true },
+    { name = "request_path", type = "path",     required = false },
+    { name = "last_error",   type = "string",   required = true },
+    { name = "attempts",     type = "u32",      required = true },
+    { name = "ts",           type = "datetime", required = true },
 ]
 
 [events."tempyr.update-candidate"]
@@ -397,6 +501,31 @@ description = "tempyr journal flush published one or more sessions to refs/tempy
 fields = [
     { name = "session_count", type = "u32",      required = true },
     { name = "ts",            type = "datetime", required = true },
+]
+
+
+# ─── Search events ─────────────────────────────────────────────────────
+
+[events."search.web-search"]
+version = 1
+description = "Search router completed a web-search call and recorded routing transparency (§4.8)."
+fields = [
+    { name = "query",          type = "string",   required = true },
+    { name = "backend",        type = "string",   required = true },
+    { name = "routing_reason", type = "string",   required = true },
+    { name = "result_count",   type = "u32",      required = true },
+    { name = "ts",             type = "datetime", required = true },
+]
+
+
+# ─── Skills events ─────────────────────────────────────────────────────
+
+[events."skills.changed"]
+version = 1
+description = "Skills watcher observed a skill file create, write, move, or delete (§21.4)."
+fields = [
+    { name = "file_path", type = "path",     required = true },
+    { name = "ts",        type = "datetime", required = true },
 ]
 
 

@@ -1,20 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "jam-events:patch.staged",
-  "title": "patch.staged",
+  "$id": "jam-events:patch.rollback-requested",
+  "title": "patch.rollback-requested",
   "type": "object",
   "additionalProperties": false,
   "properties": {
     "service": {
       "type": "string"
     },
-    "version": {
-      "type": "string"
-    },
-    "staging_path": {
-      "type": "string"
-    },
-    "binary_sha256": {
+    "reason": {
       "type": "string"
     },
     "requested_by": {
@@ -25,12 +19,10 @@
       "format": "date-time"
     }
   },
-  "description": "New binary at staging_path is ready \u2014 patch-agent runs \u00a720.3 next.",
+  "description": "Caller asks the patch-agent to roll back a service to the previous routing manifest revision (\u00a720.4).",
   "required": [
     "service",
-    "version",
-    "staging_path",
-    "binary_sha256",
+    "reason",
     "requested_by",
     "ts"
   ]

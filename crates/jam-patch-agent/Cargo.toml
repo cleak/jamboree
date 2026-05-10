@@ -1,6 +1,6 @@
 [package]
-name = "jam-cli"
-description = "The user-facing `jam` CLI binary."
+name = "jam-patch-agent"
+description = "Hot-patch supervisor with deterministic-then-LLM recovery (§20.5)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,7 +9,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [[bin]]
-name = "jam"
+name = "jam-patch-agent"
 path = "src/main.rs"
 
 [dependencies]
@@ -18,15 +18,16 @@ clap = { workspace = true }
 futures = { workspace = true }
 jam-events = { path = "../jam-events" }
 jam-nats = { path = "../jam-nats" }
-jam-setup = { path = "../jam-setup" }
 jam-tools-core = { path = "../jam-tools-core" }
 jam-trace = { path = "../jam-trace" }
-jam-ui-server = { path = "../jam-ui-server" }
 serde = { workspace = true }
 serde_json = { workspace = true }
-serde_yaml = { workspace = true }
 sha2 = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
 tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3.14"

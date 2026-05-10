@@ -312,6 +312,22 @@ impl Event for PatchLockReleased {
     const EVENT_SUBTYPE_VERSION: u32 = 1;
 }
 
+/// Caller asks the patch-agent to roll back a service to the previous routing manifest revision (§20.4).
+///
+/// Event type: `patch.rollback-requested` (version 1).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PatchRollbackRequested {
+    pub service: String,
+    pub reason: String,
+    pub requested_by: String,
+    pub ts: chrono::DateTime<chrono::Utc>,
+}
+
+impl Event for PatchRollbackRequested {
+    const EVENT_TYPE: &'static str = "patch.rollback-requested";
+    const EVENT_SUBTYPE_VERSION: u32 = 1;
+}
+
 /// Mechanical rollback — manifest reverted to previous version.
 ///
 /// Event type: `patch.rolled-back` (version 1).
@@ -344,7 +360,7 @@ impl Event for PatchRolledBackSuccessfully {
     const EVENT_SUBTYPE_VERSION: u32 = 1;
 }
 
-/// New binary present in ~/.jam/staging/ — patch-agent will pick this up.
+/// New binary at staging_path is ready — patch-agent runs §20.3 next.
 ///
 /// Event type: `patch.staged` (version 1).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -353,6 +369,7 @@ pub struct PatchStaged {
     pub version: String,
     pub staging_path: String,
     pub binary_sha256: String,
+    pub requested_by: String,
     pub ts: chrono::DateTime<chrono::Utc>,
 }
 
@@ -555,6 +572,23 @@ impl Event for PrReviewReceived {
     const EVENT_SUBTYPE_VERSION: u32 = 1;
 }
 
+/// pr-status-poller observed PR state or draft status change.
+///
+/// Event type: `pr.status-changed` (version 1).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrStatusChanged {
+    pub pr_ref: String,
+    pub task_id: String,
+    pub state: String,
+    pub draft: bool,
+    pub changed_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl Event for PrStatusChanged {
+    const EVENT_TYPE: &'static str = "pr.status-changed";
+    const EVENT_SUBTYPE_VERSION: u32 = 1;
+}
+
 /// A harness's window is exhausted (Codex 5h window full, Claude rate-limit hit, API budget cap).
 ///
 /// Event type: `quota.exhausted` (version 1).
@@ -603,6 +637,51 @@ impl Event for QuotaRefilled {
     const EVENT_SUBTYPE_VERSION: u32 = 1;
 }
 
+/// Process-side harness usage parsed from harness JSON logs or response metadata.
+///
+/// Event type: `quota.usage-observed` (version 1).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuotaUsageObserved {
+    pub harness: String,
+    pub window_kind: String,
+    pub session_id: String,
+    pub task_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cost_usd: Option<f64>,
+    pub source: String,
+    pub observed_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl Event for QuotaUsageObserved {
+    const EVENT_TYPE: &'static str = "quota.usage-observed";
+    const EVENT_SUBTYPE_VERSION: u32 = 1;
+}
+
+/// Search router completed a web-search call and recorded routing transparency (§4.8).
+///
+/// Event type: `search.web-search` (version 1).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchWebSearch {
+    pub query: String,
+    pub backend: String,
+    pub routing_reason: String,
+    pub result_count: u32,
+    pub ts: chrono::DateTime<chrono::Utc>,
+}
+
+impl Event for SearchWebSearch {
+    const EVENT_TYPE: &'static str = "search.web-search";
+    const EVENT_SUBTYPE_VERSION: u32 = 1;
+}
+
 /// jam setup completed successfully — written to NATS KV setup-result bucket too (§11.4).
 ///
 /// Event type: `setup.completed` (version 1).
@@ -618,6 +697,20 @@ impl Event for SetupCompleted {
     const EVENT_SUBTYPE_VERSION: u32 = 1;
 }
 
+/// Skills watcher observed a skill file create, write, move, or delete (§21.4).
+///
+/// Event type: `skills.changed` (version 1).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillsChanged {
+    pub file_path: String,
+    pub ts: chrono::DateTime<chrono::Utc>,
+}
+
+impl Event for SkillsChanged {
+    const EVENT_TYPE: &'static str = "skills.changed";
+    const EVENT_SUBTYPE_VERSION: u32 = 1;
+}
+
 /// Task explicitly abandoned (purge-session called or all retries exhausted).
 ///
 /// Event type: `task.abandoned` (version 1).
@@ -630,6 +723,23 @@ pub struct TaskAbandoned {
 
 impl Event for TaskAbandoned {
     const EVENT_TYPE: &'static str = "task.abandoned";
+    const EVENT_SUBTYPE_VERSION: u32 = 1;
+}
+
+/// Task failed before or outside normal Picker exit handling.
+///
+/// Event type: `task.failed` (version 1).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskFailed {
+    pub task_id: String,
+    pub reason: String,
+    pub detail: String,
+    pub failed_at: chrono::DateTime<chrono::Utc>,
+    pub source_event_type: String,
+}
+
+impl Event for TaskFailed {
+    const EVENT_TYPE: &'static str = "task.failed";
     const EVENT_SUBTYPE_VERSION: u32 = 1;
 }
 
@@ -680,6 +790,23 @@ impl Event for TempyrNodeChanged {
     const EVENT_SUBTYPE_VERSION: u32 = 1;
 }
 
+/// task-lifecycle-handler updated the canonical Tempyr task node for a lifecycle transition.
+///
+/// Event type: `tempyr.task-updated` (version 1).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TempyrTaskUpdated {
+    pub task_id: String,
+    pub status: String,
+    pub task_path: String,
+    pub source_event_type: String,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl Event for TempyrTaskUpdated {
+    const EVENT_TYPE: &'static str = "tempyr.task-updated";
+    const EVENT_SUBTYPE_VERSION: u32 = 1;
+}
+
 /// tempyr-pr-reconciler or Maestro flagged a Tempyr node as possibly stale.
 ///
 /// Event type: `tempyr.update-candidate` (version 1).
@@ -696,13 +823,51 @@ impl Event for TempyrUpdateCandidate {
     const EVENT_SUBTYPE_VERSION: u32 = 1;
 }
 
+/// Tempyr accepted a queued write side-effect after retry (§4.6.4).
+///
+/// Event type: `tempyr.write-confirmed` (version 1).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TempyrWriteConfirmed {
+    pub write_id: String,
+    pub node_id: String,
+    pub operation: String,
+    pub attempts: u32,
+    pub ts: chrono::DateTime<chrono::Utc>,
+}
+
+impl Event for TempyrWriteConfirmed {
+    const EVENT_TYPE: &'static str = "tempyr.write-confirmed";
+    const EVENT_SUBTYPE_VERSION: u32 = 1;
+}
+
+/// A trusted orchestrator component queued a Tempyr write side-effect for retry (§4.6.4).
+///
+/// Event type: `tempyr.write-pending` (version 1).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TempyrWritePending {
+    pub write_id: String,
+    pub node_id: String,
+    pub operation: String,
+    pub request_path: String,
+    pub ts: chrono::DateTime<chrono::Utc>,
+}
+
+impl Event for TempyrWritePending {
+    const EVENT_TYPE: &'static str = "tempyr.write-pending";
+    const EVENT_SUBTYPE_VERSION: u32 = 1;
+}
+
 /// Retry exhausted on a Tempyr write — needs human (§4.6.4).
 ///
 /// Event type: `tempyr.write-permanently-failed` (version 1).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TempyrWritePermanentlyFailed {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub write_id: Option<String>,
     pub node_id: String,
     pub operation: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_path: Option<String>,
     pub last_error: String,
     pub attempts: u32,
     pub ts: chrono::DateTime<chrono::Utc>,
@@ -710,5 +875,27 @@ pub struct TempyrWritePermanentlyFailed {
 
 impl Event for TempyrWritePermanentlyFailed {
     const EVENT_TYPE: &'static str = "tempyr.write-permanently-failed";
+    const EVENT_SUBTYPE_VERSION: u32 = 1;
+}
+
+/// jam-svc-worktree created a Picker worktree from origin/<trunk> (§6.9).
+///
+/// Event type: `worktree.created` (version 1).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorktreeCreated {
+    pub task_id: String,
+    pub project: String,
+    pub repo_path: String,
+    pub worktree_path: String,
+    pub branch: String,
+    pub trunk_ref: String,
+    pub trunk_sha: String,
+    pub fetched: bool,
+    pub branched_at: chrono::DateTime<chrono::Utc>,
+    pub fetch_cursor_at_create: chrono::DateTime<chrono::Utc>,
+}
+
+impl Event for WorktreeCreated {
+    const EVENT_TYPE: &'static str = "worktree.created";
     const EVENT_SUBTYPE_VERSION: u32 = 1;
 }

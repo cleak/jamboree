@@ -763,7 +763,13 @@ fn run_patch(action: PatchAction) -> ExitCode {
             if !report.detail.is_empty() {
                 println!("detail: {}", report.detail);
             }
-            if report.outcome == "confirmed" || report.outcome == "rolled-back-successfully" {
+            // Apply success: confirmed or rolled-back-successfully (the latter
+            // means the patch failed but the rollback restored health).
+            // Rollback success: rolled-back (no post-rollback verify path).
+            if matches!(
+                report.outcome.as_str(),
+                "confirmed" | "rolled-back-successfully" | "rolled-back"
+            ) {
                 ExitCode::SUCCESS
             } else {
                 ExitCode::from(1)
@@ -969,7 +975,9 @@ async fn publish_apply_and_wait(
     staging_path: PathBuf,
     timeout: Duration,
 ) -> Result<PatchTerminalReport, String> {
-    use jam_events::generated::{PatchFailed, PatchRolledBack, PatchStaged};
+    use jam_events::generated::{
+        PatchConfirmed, PatchFailed, PatchRolledBackSuccessfully, PatchStaged,
+    };
     if !staging_path.is_file() {
         return Err(format!(
             "staged binary missing: {}\nFix: build the service binary and place it at this path, or pass --staging-path",
@@ -983,10 +991,13 @@ async fn publish_apply_and_wait(
         .await
         .map_err(|err| format!("connect {nats_url}: {err}"))?;
 
-    // Subscribe before publishing so we don't miss the terminal event.
+    // Subscribe before publishing so we don't miss the terminal event. For an
+    // apply, patch.rolled-back is intermediate — the agent emits it during
+    // mechanical rollback, then post-rollback verify produces either
+    // patch.rolled-back-successfully or patch.failed.
     let confirmed_sub = nats
         .client()
-        .subscribe(jam_events::generated::PatchConfirmed::EVENT_TYPE)
+        .subscribe(PatchConfirmed::EVENT_TYPE)
         .await
         .map_err(|err| format!("subscribe patch.confirmed: {err}"))?;
     let failed_sub = nats
@@ -994,11 +1005,11 @@ async fn publish_apply_and_wait(
         .subscribe(PatchFailed::EVENT_TYPE)
         .await
         .map_err(|err| format!("subscribe patch.failed: {err}"))?;
-    let rolled_back_sub = nats
+    let rb_success_sub = nats
         .client()
-        .subscribe(PatchRolledBack::EVENT_TYPE)
+        .subscribe(PatchRolledBackSuccessfully::EVENT_TYPE)
         .await
-        .map_err(|err| format!("subscribe patch.rolled-back: {err}"))?;
+        .map_err(|err| format!("subscribe patch.rolled-back-successfully: {err}"))?;
 
     let staged = PatchStaged {
         service: service.clone(),
@@ -1024,10 +1035,10 @@ async fn publish_apply_and_wait(
         timeout.as_secs()
     );
 
-    wait_for_terminal_patch_event(
+    wait_for_apply_terminal(
         confirmed_sub,
         failed_sub,
-        rolled_back_sub,
+        rb_success_sub,
         &trace_ctx.trace_id.to_string(),
         &service,
         timeout,
@@ -1050,11 +1061,8 @@ async fn publish_rollback_and_wait(
         .await
         .map_err(|err| format!("connect {nats_url}: {err}"))?;
 
-    let confirmed_sub = nats
-        .client()
-        .subscribe(jam_events::generated::PatchConfirmed::EVENT_TYPE)
-        .await
-        .map_err(|err| format!("subscribe patch.confirmed: {err}"))?;
+    // For an explicit rollback request the agent runs perform_rollback only
+    // (no post-rollback verify), so patch.rolled-back is the terminal event.
     let failed_sub = nats
         .client()
         .subscribe(PatchFailed::EVENT_TYPE)
@@ -1088,10 +1096,9 @@ async fn publish_rollback_and_wait(
         timeout.as_secs()
     );
 
-    wait_for_terminal_patch_event(
-        confirmed_sub,
-        failed_sub,
+    wait_for_rollback_terminal(
         rolled_back_sub,
+        failed_sub,
         &trace_ctx.trace_id.to_string(),
         &service,
         timeout,
@@ -1099,16 +1106,16 @@ async fn publish_rollback_and_wait(
     .await
 }
 
-async fn wait_for_terminal_patch_event(
+async fn wait_for_apply_terminal(
     mut confirmed_sub: jam_nats::async_nats::Subscriber,
     mut failed_sub: jam_nats::async_nats::Subscriber,
-    mut rolled_back_sub: jam_nats::async_nats::Subscriber,
+    mut rb_success_sub: jam_nats::async_nats::Subscriber,
     trace_id: &str,
     service: &str,
     timeout: Duration,
 ) -> Result<PatchTerminalReport, String> {
     use futures::StreamExt as _;
-    use jam_events::generated::{PatchConfirmed, PatchFailed, PatchRolledBack};
+    use jam_events::generated::{PatchConfirmed, PatchFailed, PatchRolledBackSuccessfully};
 
     let deadline = tokio::time::sleep(timeout);
     tokio::pin!(deadline);
@@ -1145,6 +1152,43 @@ async fn wait_for_terminal_patch_event(
                     });
                 }
             }
+            msg = rb_success_sub.next() => {
+                let Some(msg) = msg else {
+                    return Err("patch.rolled-back-successfully subscription closed unexpectedly".into());
+                };
+                if let Some(env) = decode_envelope::<PatchRolledBackSuccessfully>(&msg.payload, trace_id, service) {
+                    return Ok(PatchTerminalReport {
+                        outcome: "rolled-back-successfully".into(),
+                        service: env.payload.service,
+                        detail: format!("restored to version {}", env.payload.version),
+                    });
+                }
+            }
+        }
+    }
+}
+
+async fn wait_for_rollback_terminal(
+    mut rolled_back_sub: jam_nats::async_nats::Subscriber,
+    mut failed_sub: jam_nats::async_nats::Subscriber,
+    trace_id: &str,
+    service: &str,
+    timeout: Duration,
+) -> Result<PatchTerminalReport, String> {
+    use futures::StreamExt as _;
+    use jam_events::generated::{PatchFailed, PatchRolledBack};
+
+    let deadline = tokio::time::sleep(timeout);
+    tokio::pin!(deadline);
+
+    loop {
+        tokio::select! {
+            () = &mut deadline => {
+                return Err(format!(
+                    "no terminal patch event for trace {trace_id} within {}s",
+                    timeout.as_secs()
+                ));
+            }
             msg = rolled_back_sub.next() => {
                 let Some(msg) = msg else {
                     return Err("patch.rolled-back subscription closed unexpectedly".into());
@@ -1157,6 +1201,18 @@ async fn wait_for_terminal_patch_event(
                             "{} -> {}: {}",
                             env.payload.from_version, env.payload.to_version, env.payload.reason
                         ),
+                    });
+                }
+            }
+            msg = failed_sub.next() => {
+                let Some(msg) = msg else {
+                    return Err("patch.failed subscription closed unexpectedly".into());
+                };
+                if let Some(env) = decode_envelope::<PatchFailed>(&msg.payload, trace_id, service) {
+                    return Ok(PatchTerminalReport {
+                        outcome: "failed".into(),
+                        service: env.payload.service,
+                        detail: format!("incident {} at {}: {}", env.payload.incident_id, env.payload.incident_dir, env.payload.summary),
                     });
                 }
             }
@@ -1193,6 +1249,11 @@ impl EnvelopeService for jam_events::generated::PatchFailed {
     }
 }
 impl EnvelopeService for jam_events::generated::PatchRolledBack {
+    fn service(&self) -> &str {
+        &self.service
+    }
+}
+impl EnvelopeService for jam_events::generated::PatchRolledBackSuccessfully {
     fn service(&self) -> &str {
         &self.service
     }

@@ -230,14 +230,26 @@ export JAM_PATCH_AGENT_SKIP_DOCTOR=1
 export JAM_PATCH_AGENT_REQUEST_TIMEOUT_SECS=2
 export JAM_PATCH_AGENT_COMMAND_TIMEOUT_SECS=10
 
+# Bootstrap: under the new flow `jam patch apply` publishes patch.staged and
+# waits for a terminal event (patch.confirmed | patch.failed |
+# patch.rolled-back-successfully), so an agent must be running before any
+# apply. The bootstrap agent runs without the broken env so the §20.3 swap
+# completes and patch.confirmed fires; --max-events 1 makes it exit after the
+# patch.applied verify, leaving each scenario to start a fresh agent.
+start_patch_agent "$SMOKE_HOME/patch-agent-bootstrap.log" env -u JAM_OBSERVE_LIST_BLOCKERS_BROKEN -u JAM_PATCH_AGENT_LLM_CMD
 target/debug/jam patch apply observe 0.0.9 --nats-url "$NATS_URL"
+wait "$AGENT_PID"
+AGENT_PID=""
 
+# Success scenario: agent spawns the new service, so the broken trigger now
+# sits on the *agent* — but version-keyed (JAM_OBSERVE_LIST_BLOCKERS_BROKEN_
+# 0_1_0) so the env doesn't poison the v0.0.9 binary the agent relaunches
+# during rollback recovery.
 SUCCESS_READY="$SMOKE_HOME/success-events-ready"
 SUCCESS_EVENTS="$SMOKE_HOME/success-events.json"
 capture_events "$SUCCESS_READY" "$SUCCESS_EVENTS" patch.rolled-back-successfully notify.human
-start_patch_agent "$SMOKE_HOME/patch-agent-success.log" env -u JAM_OBSERVE_LIST_BLOCKERS_BROKEN -u JAM_PATCH_AGENT_LLM_CMD
-JAM_OBSERVE_LIST_BLOCKERS_BROKEN=true \
-    target/debug/jam patch apply observe 0.1.0 --nats-url "$NATS_URL"
+start_patch_agent "$SMOKE_HOME/patch-agent-success.log" env -u JAM_PATCH_AGENT_LLM_CMD JAM_OBSERVE_LIST_BLOCKERS_BROKEN_0_1_0=true
+target/debug/jam patch apply observe 0.1.0 --nats-url "$NATS_URL"
 wait "$AGENT_PID"
 AGENT_PID=""
 wait "$EVENT_PID"
@@ -250,10 +262,9 @@ start_observe_route "0.0.9" "tool.observe.v009" "true"
 FAIL_READY="$SMOKE_HOME/failure-events-ready"
 FAIL_EVENTS="$SMOKE_HOME/failure-events.json"
 capture_events "$FAIL_READY" "$FAIL_EVENTS" patch.failed notify.human
-start_patch_agent "$SMOKE_HOME/patch-agent-failure.log" env JAM_OBSERVE_LIST_BLOCKERS_BROKEN=true JAM_PATCH_AGENT_LLM_CMD=/bin/false
+start_patch_agent "$SMOKE_HOME/patch-agent-failure.log" env JAM_OBSERVE_LIST_BLOCKERS_BROKEN_0_1_1=true JAM_OBSERVE_LIST_BLOCKERS_BROKEN_0_0_9=true JAM_PATCH_AGENT_LLM_CMD=/bin/false
 set +e
-JAM_OBSERVE_LIST_BLOCKERS_BROKEN=true \
-    target/debug/jam patch apply observe 0.1.1 --nats-url "$NATS_URL"
+target/debug/jam patch apply observe 0.1.1 --nats-url "$NATS_URL"
 APPLY_STATUS="$?"
 wait "$AGENT_PID"
 AGENT_STATUS="$?"
@@ -264,8 +275,9 @@ if [[ "$AGENT_STATUS" -eq 0 ]]; then
     printf 'patch agent was expected to exit non-zero after unrecoverable failure\n' >&2
     exit 1
 fi
-if [[ "$APPLY_STATUS" -ne 0 ]]; then
-    printf 'second jam patch apply exited %s after emitting patch.applied; continuing smoke\n' "$APPLY_STATUS"
+if [[ "$APPLY_STATUS" -eq 0 ]]; then
+    printf 'jam patch apply exited 0 but the agent failed unrecoverably; expected non-zero\n' >&2
+    exit 1
 fi
 wait "$EVENT_PID"
 EVENT_PID=""

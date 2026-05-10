@@ -715,6 +715,7 @@ fn start_versioned_patch_service(
     let mut command = ProcessCommand::new(&installed.runtime_path);
     command
         .env("NATS_URL", nats_url)
+        .env("JAM_DEPLOY_VERSION", version)
         .env("JAM_TOOL_SUBJECT_PREFIX", subject_prefix)
         .env(service_subject_prefix_env(service), subject_prefix)
         .stdin(Stdio::null())

@@ -670,7 +670,22 @@ fn world_snapshot_delay() -> Option<Duration> {
 }
 
 fn list_blockers_smoke_broken() -> bool {
-    parse_bool_env("JAM_OBSERVE_LIST_BLOCKERS_BROKEN").unwrap_or(false)
+    if parse_bool_env("JAM_OBSERVE_LIST_BLOCKERS_BROKEN").unwrap_or(false) {
+        return true;
+    }
+    // Per-deploy-version override: the patch-agent passes JAM_DEPLOY_VERSION
+    // when spawning a versioned service, so the same agent process can carry
+    // broken triggers for specific deploy versions without poisoning rollback
+    // relaunches at a different version. Substitute non-alphanumerics with
+    // `_` so a deploy version like `0.1.0` becomes `0_1_0`.
+    let Ok(deploy_version) = std::env::var("JAM_DEPLOY_VERSION") else {
+        return false;
+    };
+    let token: String = deploy_version
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+        .collect();
+    parse_bool_env(&format!("JAM_OBSERVE_LIST_BLOCKERS_BROKEN_{token}")).unwrap_or(false)
 }
 
 fn dispatch(method: &str, payload: &[u8], state: &ObserveState, ctx: &TraceCtx) -> Response {

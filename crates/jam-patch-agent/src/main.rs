@@ -320,7 +320,12 @@ async fn run() -> Result<(), AgentError> {
     let shutdown = tokio::signal::ctrl_c();
     tokio::pin!(shutdown);
     let mut handled = 0_u64;
-    let mut seen = HashSet::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    // Cap the dedup set so a long-running agent doesn't accumulate keys
+    // forever. 10k events is well past any realistic burst; on overflow we
+    // clear and accept that pathological event replays inside the same
+    // process lifetime could re-trigger work.
+    const SEEN_CAP: usize = 10_000;
 
     loop {
         tokio::select! {
@@ -338,6 +343,9 @@ async fn run() -> Result<(), AgentError> {
                     "applied:{}:{}:{}",
                     envelope.trace_id, envelope.payload.service, envelope.payload.to_version
                 );
+                if seen.len() >= SEEN_CAP {
+                    seen.clear();
+                }
                 if seen.insert(key) {
                     match process_patch_applied(&nats, &config, envelope).await? {
                         ProcessOutcome::Continue => {}
@@ -362,6 +370,9 @@ async fn run() -> Result<(), AgentError> {
                     "staged:{}:{}:{}",
                     envelope.trace_id, envelope.payload.service, envelope.payload.version
                 );
+                if seen.len() >= SEEN_CAP {
+                    seen.clear();
+                }
                 if seen.insert(key) {
                     process_patch_staged(&nats, &config, envelope).await;
                 }
@@ -376,8 +387,16 @@ async fn run() -> Result<(), AgentError> {
                     "rollback:{}:{}",
                     envelope.trace_id, envelope.payload.service
                 );
+                if seen.len() >= SEEN_CAP {
+                    seen.clear();
+                }
                 if seen.insert(key) {
                     process_patch_rollback_requested(&nats, envelope).await;
+                }
+                handled = handled.saturating_add(1);
+                if cli.max_events.is_some_and(|max_events| handled >= max_events) {
+                    info!(handled, "max events reached");
+                    return Ok(());
                 }
             }
         }

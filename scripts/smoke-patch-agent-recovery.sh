@@ -217,9 +217,11 @@ mkdir -p "$SMOKE_HOME/staging" "$SMOKE_HOME/logs"
 cp target/debug/jam-svc-observe "$SMOKE_HOME/staging/jam-svc-observe-0.0.9"
 cp target/debug/jam-svc-observe "$SMOKE_HOME/staging/jam-svc-observe-0.1.0"
 cp target/debug/jam-svc-observe "$SMOKE_HOME/staging/jam-svc-observe-0.1.1"
+cp target/debug/jam-svc-observe "$SMOKE_HOME/staging/jam-svc-observe-0.2.0"
 chmod +x "$SMOKE_HOME/staging/jam-svc-observe-0.0.9" \
     "$SMOKE_HOME/staging/jam-svc-observe-0.1.0" \
-    "$SMOKE_HOME/staging/jam-svc-observe-0.1.1"
+    "$SMOKE_HOME/staging/jam-svc-observe-0.1.1" \
+    "$SMOKE_HOME/staging/jam-svc-observe-0.2.0"
 
 export JAM_HOME="$SMOKE_HOME"
 export NATS_URL
@@ -240,6 +242,40 @@ start_patch_agent "$SMOKE_HOME/patch-agent-bootstrap.log" env -u JAM_OBSERVE_LIS
 target/debug/jam patch apply observe 0.0.9 --nats-url "$NATS_URL"
 wait "$AGENT_PID"
 AGENT_PID=""
+
+# Rollback scenario: apply a clean 0.2.0 (subject prefix v020 — doesn't
+# collide with v009/v010/v011 used later), then explicit `jam patch
+# rollback observe` rolls back to 0.0.9 and the agent emits patch.rolled-
+# back. Uses v020 specifically so subsequent scenarios still see manifest
+# state matching their expectations.
+start_patch_agent "$SMOKE_HOME/patch-agent-rollback-apply.log" env -u JAM_OBSERVE_LIST_BLOCKERS_BROKEN -u JAM_PATCH_AGENT_LLM_CMD
+target/debug/jam patch apply observe 0.2.0 --nats-url "$NATS_URL"
+wait "$AGENT_PID"
+AGENT_PID=""
+
+ROLLBACK_READY="$SMOKE_HOME/rollback-events-ready"
+ROLLBACK_EVENTS="$SMOKE_HOME/rollback-events.json"
+capture_events "$ROLLBACK_READY" "$ROLLBACK_EVENTS" patch.rolled-back
+start_patch_agent "$SMOKE_HOME/patch-agent-rollback.log" env -u JAM_OBSERVE_LIST_BLOCKERS_BROKEN -u JAM_PATCH_AGENT_LLM_CMD
+target/debug/jam patch rollback observe --reason "smoke explicit rollback" --nats-url "$NATS_URL"
+wait "$AGENT_PID"
+AGENT_PID=""
+wait "$EVENT_PID"
+EVENT_PID=""
+
+python3 - "$ROLLBACK_EVENTS" <<'PY'
+import json
+import sys
+
+events = json.load(open(sys.argv[1], encoding="utf-8"))
+payload = events["patch.rolled-back"]["payload"]
+if payload["from_version"] != "0.2.0":
+    raise SystemExit(f"expected from_version=0.2.0, got {payload['from_version']!r}")
+if payload["to_version"] != "0.0.9":
+    raise SystemExit(f"expected to_version=0.0.9, got {payload['to_version']!r}")
+if "smoke explicit rollback" not in payload["reason"]:
+    raise SystemExit(f"reason missing CLI reason text: {payload['reason']!r}")
+PY
 
 # Success scenario: agent spawns the new service, so the broken trigger now
 # sits on the *agent* — but version-keyed (JAM_OBSERVE_LIST_BLOCKERS_BROKEN_

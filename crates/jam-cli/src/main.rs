@@ -1004,21 +1004,26 @@ async fn publish_apply_and_wait(
     // patch.rolled-back is intermediate during apply: the agent emits it
     // during mechanical rollback, then post-rollback verify decides between
     // rolled-back-successfully and failed.
-    let confirmed_sub = nats
-        .client()
-        .subscribe(PatchConfirmed::EVENT_TYPE)
-        .await
-        .map_err(|err| format!("subscribe patch.confirmed: {err}"))?;
-    let failed_sub = nats
-        .client()
-        .subscribe(PatchFailed::EVENT_TYPE)
-        .await
-        .map_err(|err| format!("subscribe patch.failed: {err}"))?;
-    let rb_success_sub = nats
-        .client()
-        .subscribe(PatchRolledBackSuccessfully::EVENT_TYPE)
-        .await
-        .map_err(|err| format!("subscribe patch.rolled-back-successfully: {err}"))?;
+    let (confirmed_sub, failed_sub, rb_success_sub) = tokio::try_join!(
+        async {
+            nats.client()
+                .subscribe(PatchConfirmed::EVENT_TYPE)
+                .await
+                .map_err(|err| format!("subscribe patch.confirmed: {err}"))
+        },
+        async {
+            nats.client()
+                .subscribe(PatchFailed::EVENT_TYPE)
+                .await
+                .map_err(|err| format!("subscribe patch.failed: {err}"))
+        },
+        async {
+            nats.client()
+                .subscribe(PatchRolledBackSuccessfully::EVENT_TYPE)
+                .await
+                .map_err(|err| format!("subscribe patch.rolled-back-successfully: {err}"))
+        },
+    )?;
 
     let staged = PatchStaged {
         service: ctx.service.clone(),
@@ -1067,16 +1072,20 @@ async fn publish_rollback_and_wait(
 
     // Explicit rollback skips the post-rollback verify, so patch.rolled-back
     // is terminal here (unlike the apply path).
-    let failed_sub = nats
-        .client()
-        .subscribe(PatchFailed::EVENT_TYPE)
-        .await
-        .map_err(|err| format!("subscribe patch.failed: {err}"))?;
-    let rolled_back_sub = nats
-        .client()
-        .subscribe(PatchRolledBack::EVENT_TYPE)
-        .await
-        .map_err(|err| format!("subscribe patch.rolled-back: {err}"))?;
+    let (failed_sub, rolled_back_sub) = tokio::try_join!(
+        async {
+            nats.client()
+                .subscribe(PatchFailed::EVENT_TYPE)
+                .await
+                .map_err(|err| format!("subscribe patch.failed: {err}"))
+        },
+        async {
+            nats.client()
+                .subscribe(PatchRolledBack::EVENT_TYPE)
+                .await
+                .map_err(|err| format!("subscribe patch.rolled-back: {err}"))
+        },
+    )?;
 
     let payload = PatchRollbackRequested {
         service: ctx.service.clone(),

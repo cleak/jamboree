@@ -111,6 +111,12 @@ struct RepoConfig {
     timeout: Duration,
     handled_artifacts_path: PathBuf,
     github_app: Option<GitHubAppConfig>,
+    // User-to-server token (ghu_*) authorizing the App on behalf of a
+    // human user. Preferred over installation tokens for write paths
+    // (PR creation, push, comments) so PRs are attributed to that user
+    // rather than `app/<name>[bot]`. CodeRabbit and similar reviewers
+    // hard-skip bot-authored PRs; user-attribution avoids that.
+    github_user_token: Option<SecretString>,
 }
 
 impl RepoConfig {
@@ -141,6 +147,12 @@ impl RepoConfig {
                 PathBuf::from,
             );
         let github_app = GitHubAppConfig::from_env()?;
+        let github_user_token = first_secret(
+            &["JAM_GITHUB_USER_TOKEN", "GITHUB_USER_TOKEN"],
+            "jam/pickers/github-user-token",
+            "pickers/github-user-token",
+        )?
+        .map(SecretString::from);
         Ok(Self {
             git_bin,
             gh_bin,
@@ -151,6 +163,7 @@ impl RepoConfig {
             timeout,
             handled_artifacts_path,
             github_app,
+            github_user_token,
         })
     }
 }
@@ -690,7 +703,7 @@ async fn open_pr(
         git_push(&state.config, worktree, &input.branch).await?;
     }
 
-    let url = gh_pr_create(
+    let (url, token_kind) = gh_pr_create(
         &state.config,
         &repo,
         &base,
@@ -710,12 +723,18 @@ async fn open_pr(
         )
     })?;
     let opened_at = Utc::now();
-    if let Err(err) = post_coderabbit_trigger(&state.config, &pr_ref).await {
-        warn!(
-            pr_ref = %pr_ref,
-            error = %err,
-            "failed to post @coderabbitai full review trigger; PR is open but CodeRabbit may have skipped it"
-        );
+    // With a user-to-server token the PR is attributed to a real user
+    // (is_bot:false) and CodeRabbit auto-reviews through the normal path.
+    // The comment-trigger workaround is only needed when we fall back to
+    // installation-token auth that flags PRs as bot-authored.
+    if token_kind == TokenKind::Installation {
+        if let Err(err) = post_coderabbit_trigger(&state.config, &pr_ref).await {
+            warn!(
+                pr_ref = %pr_ref,
+                error = %err,
+                "failed to post @coderabbitai full review trigger; PR is open but CodeRabbit may have skipped it"
+            );
+        }
     }
     let output = OpenPrOutput {
         task_id: input.task_id,
@@ -749,6 +768,35 @@ async fn github_app_installation_token(
         return Ok(None);
     };
     app_installation_token(app).await.map(Some)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TokenKind {
+    /// `ghu_*` user-to-server token. PRs/pushes attributed to the
+    /// authorizing user with `is_bot:false`. Required to bypass
+    /// CodeRabbit's bot-author skip.
+    User,
+    /// GitHub App installation token. PRs/pushes attributed to
+    /// `app/<name>[bot]` with `is_bot:true`. Fine for read-heavy
+    /// paths (higher rate limit); triggers reviewer bot-skips on
+    /// writes.
+    Installation,
+}
+
+/// Resolve the GitHub token for a *write* path (PR creation, push,
+/// follow-up comments). Prefers the user-to-server token so reviewer
+/// bots (CodeRabbit) auto-review through the normal path; falls back
+/// to the installation token. Returns `(token, kind)` or `None` if
+/// neither is configured.
+async fn resolve_write_token(
+    config: &RepoConfig,
+) -> Result<Option<(SecretString, TokenKind)>, RepoError> {
+    if let Some(token) = &config.github_user_token {
+        return Ok(Some((token.clone(), TokenKind::User)));
+    }
+    Ok(github_app_installation_token(config)
+        .await?
+        .map(|token| (token, TokenKind::Installation)))
 }
 
 async fn app_installation_token(app: &GitHubAppConfig) -> Result<SecretString, RepoError> {
@@ -1304,7 +1352,7 @@ async fn gh_pr_create(
     input: &OpenPrInput,
     draft: bool,
     worktree_path: Option<&Path>,
-) -> Result<String, RepoError> {
+) -> Result<(String, TokenKind), RepoError> {
     let mut command = Command::new(&config.gh_bin);
     command.arg("pr");
     command.arg("create");
@@ -1324,12 +1372,18 @@ async fn gh_pr_create(
     if let Some(path) = worktree_path {
         command.current_dir(path);
     }
-    if let Some(token) = github_app_installation_token(config).await? {
+    let token_kind = if let Some((token, kind)) = resolve_write_token(config).await? {
         command.env("GH_TOKEN", token.expose_secret());
-    }
+        kind
+    } else {
+        // Treat unauthenticated `gh` as an Installation-style fallback: the
+        // user-attribution gate is off, so reviewer bots will skip. This is
+        // the same behavior as the previous code path.
+        TokenKind::Installation
+    };
     let output = run_command(command, config.timeout, "gh-pr-create").await?;
     let stdout = String::from_utf8_lossy(&output.stdout);
-    stdout
+    let url = stdout
         .lines()
         .map(str::trim)
         .find(|line| line.starts_with("https://github.com/") && line.contains("/pull/"))
@@ -1341,7 +1395,8 @@ async fn gh_pr_create(
                 "Verify gh pr create completed successfully and printed the created PR URL.",
                 "api-open-pr",
             )
-        })
+        })?;
+    Ok((url, token_kind))
 }
 
 async fn gh_api_json<T>(config: &RepoConfig, endpoint: &str) -> Result<T, RepoError>
@@ -1377,7 +1432,7 @@ async fn gh_api_post_body(
     command.arg(endpoint);
     command.arg("-f");
     command.arg(format!("body={body}"));
-    if let Some(token) = github_app_installation_token(config).await? {
+    if let Some((token, _)) = resolve_write_token(config).await? {
         command.env("GH_TOKEN", token.expose_secret());
     }
     let output = run_command(command, config.timeout, "gh-api-post").await?;
@@ -1411,7 +1466,10 @@ async fn git_push(
     worktree_path: &Path,
     branch: &str,
 ) -> Result<(), RepoError> {
-    let token = github_app_installation_token(config).await?;
+    // HTTPS auth with `x-access-token:<token>` works for both
+    // installation tokens (ghs_*) and user-to-server tokens (ghu_*); the
+    // credential helper reads the same env var either way.
+    let token = resolve_write_token(config).await?.map(|(t, _)| t);
     let mut command = Command::new(&config.git_bin);
     command.arg("-C");
     command.arg(worktree_path);
@@ -2300,6 +2358,7 @@ mod tests {
             timeout: Duration::from_secs(1),
             handled_artifacts_path: PathBuf::from("/tmp/review-artifacts.jsonl"),
             github_app: None,
+            github_user_token: None,
         };
         let selector = PrSelector::parse("cleak/blueberry#42", None, &config).unwrap();
         assert_eq!(selector.selector, "42");
@@ -2615,7 +2674,7 @@ exit 1
             push: Some(false),
         };
 
-        let url = gh_pr_create(
+        let (url, token_kind) = gh_pr_create(
             &fixture.config(),
             "cleak/blueberry",
             "main",
@@ -2627,6 +2686,24 @@ exit 1
         .unwrap();
 
         assert_eq!(url, "https://github.com/cleak/blueberry/pull/77");
+        assert_eq!(token_kind, TokenKind::Installation);
+    }
+
+    #[tokio::test]
+    async fn resolve_write_token_prefers_user_over_installation() {
+        let fixture = GhFixture::new();
+        let mut config = fixture.config();
+        config.github_user_token = Some(SecretString::from("ghu_test_user_token".to_owned()));
+        let (token, kind) = resolve_write_token(&config).await.unwrap().unwrap();
+        assert_eq!(kind, TokenKind::User);
+        assert_eq!(token.expose_secret(), "ghu_test_user_token");
+    }
+
+    #[tokio::test]
+    async fn resolve_write_token_returns_none_when_unconfigured() {
+        let fixture = GhFixture::new();
+        let config = fixture.config();
+        assert!(resolve_write_token(&config).await.unwrap().is_none());
     }
 
     #[tokio::test]
@@ -2674,6 +2751,7 @@ exit 1
                 timeout: Duration::from_secs(2),
                 handled_artifacts_path: self.tmp.path().join("review-artifacts.jsonl"),
                 github_app: None,
+                github_user_token: None,
             }
         }
 

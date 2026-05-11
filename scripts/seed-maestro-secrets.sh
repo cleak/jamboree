@@ -59,6 +59,7 @@ SECRETS=(
     "jam/pickers/github-app-id|single|recommended|Numeric GitHub App ID for the Jamboree-installed App. Required for any Picker that creates PRs."
     "jam/pickers/github-app-installation-id|single|recommended|Numeric installation ID for the App installation on the Blueberry repo. Required for installation-token exchange."
     "jam/pickers/github-app-key|multi|recommended|PEM-format private key for the GitHub App (the entire -----BEGIN/-----END block)."
+    "jam/pickers/github-user-token|single|recommended|GitHub App user-to-server token (ghu_*) authorizing the App on behalf of a human user. Required for orchestrator-opened PRs to be attributed to a real user (is_bot:false) so CodeRabbit auto-reviews them. Run scripts/authorize-github-user-token.sh to generate."
     "jam/notify/ntfy-token|single|recommended|ntfy.sh token used to page the Manager when something fails or needs sign-off."
     "jam/search/brave|single|recommended|Brave Search API key — default search-router backend per spec §4.8. Free tier (2k/mo) at https://brave.com/search/api/. Without this, web-search tool calls have no backend until you enable another provider below."
     "jam/nats/token|single|optional|NATS auth token. Skip unless you have enabled NATS authentication."

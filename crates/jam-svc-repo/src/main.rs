@@ -41,6 +41,13 @@ const DEFAULT_CODEX_BIN: &str = "codex";
 const DEFAULT_GITHUB_REPO: &str = "cleak/blueberry";
 const DEFAULT_BASE_BRANCH: &str = "main";
 const DEFAULT_NOTIFY_HUMAN_SUBJECT: &str = "tool.supervise.notify-human";
+// CodeRabbit auto-skips PRs whose author GitHub reports as type=Bot (GitHub App
+// installations always produce [bot] authors). Posting this trigger comment
+// bypasses the skip; see docs/proposal-v5.md and the CodeRabbit FAQ.
+// `@coderabbitai review` is incremental and treats the bot-author skip as
+// already-reviewed commits, so it no-ops. `full review` forces a from-scratch
+// pass over every file.
+const CODERABBIT_TRIGGER_COMMENT: &str = "@coderabbitai full review";
 const DEFAULT_TIMEOUT_SECS: u64 = 60;
 const TOKEN_MAX_LEN: usize = 128;
 const TITLE_MAX_LEN: usize = 240;
@@ -703,6 +710,13 @@ async fn open_pr(
         )
     })?;
     let opened_at = Utc::now();
+    if let Err(err) = post_coderabbit_trigger(&state.config, &pr_ref).await {
+        warn!(
+            pr_ref = %pr_ref,
+            error = %err,
+            "failed to post @coderabbitai full review trigger; PR is open but CodeRabbit may have skipped it"
+        );
+    }
     let output = OpenPrOutput {
         task_id: input.task_id,
         pr_ref,
@@ -716,6 +730,16 @@ async fn open_pr(
     };
     publish_pr_opened(nats, &output, ctx).await?;
     Ok(output)
+}
+
+async fn post_coderabbit_trigger(config: &RepoConfig, pr_ref: &str) -> Result<(), RepoError> {
+    let selector = PrApiSelector::from_pr_ref(pr_ref)?;
+    let endpoint = format!(
+        "repos/{}/issues/{}/comments",
+        selector.repo, selector.number
+    );
+    gh_api_post_body(config, &endpoint, CODERABBIT_TRIGGER_COMMENT).await?;
+    Ok(())
 }
 
 async fn github_app_installation_token(
@@ -2603,6 +2627,28 @@ exit 1
         .unwrap();
 
         assert_eq!(url, "https://github.com/cleak/blueberry/pull/77");
+    }
+
+    #[tokio::test]
+    async fn post_coderabbit_trigger_comments_on_pr() {
+        let fixture = GhFixture::new();
+        fixture.write_script(
+            r#"#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1 $2 $3 $4" == "api --method POST repos/cleak/blueberry/issues/77/comments" ]]; then
+  if [[ "$5" == "-f" && "$6" == "body=@coderabbitai full review" ]]; then
+    printf '{"html_url":"https://github.com/cleak/blueberry/pull/77#issuecomment-1"}\n'
+    exit 0
+  fi
+fi
+printf 'unexpected args: %s\n' "$*" >&2
+exit 1
+"#,
+        );
+
+        post_coderabbit_trigger(&fixture.config(), "cleak/blueberry#77")
+            .await
+            .unwrap();
     }
 
     struct GhFixture {

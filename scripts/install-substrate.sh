@@ -42,6 +42,7 @@ GITHUB_APP_CREDENTIAL_HELPER_DEST="$INSTALL_DIR/jam-github-app-git-credential"
 FIRST_PARTY_PACKAGES=(
     jam-cli
     jam-nats-bridge
+    jam-patch-agent
     jam-pr-poller
     jam-svc-message
     jam-svc-observe
@@ -56,6 +57,7 @@ FIRST_PARTY_PACKAGES=(
 FIRST_PARTY_BINS=(
     jam
     jam-nats-bridge
+    jam-patch-agent
     jam-pr-poller
     jam-svc-message
     jam-svc-observe

@@ -351,11 +351,12 @@ processes:
   patch-agent:
     description: "Hot-patch supervisor with deterministic-then-LLM recovery (§20.5)."
     user: maestro
-    command: "/opt/jam/bin/jam-patch-agent"
+    command: "/home/maestro/.jam/bin/jam-patch-agent"
+    environment:
+      - "JAM_BIN=/opt/jam/bin/jam"
     depends_on:
       nats:
         condition: process_healthy
-    disabled: true
 
   # ─── Maestro + UI (Phase 1, Phase 6) ────────────────────────────────
 

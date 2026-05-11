@@ -32,6 +32,8 @@ MAESTRO_UID="2000"
 PICKER_UID="2001"
 SUDOERS_FILE="/etc/sudoers.d/jam-users"
 SETUP_LOG="/etc/jam/bootstrap.log"
+JAM_INSTALL_BIN_SRC=""
+JAM_INSTALL_BIN_DEST="/opt/jam/sbin/jam-install-bin"
 
 # Source-of-truth paths (per dec-skills-in-monorepo-v1, dec-blueberry-jam-path).
 # Resolved at runtime — JAMBOREE_REPO points at the monorepo containing this script.
@@ -39,6 +41,7 @@ JAMBOREE_REPO="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 SKILLS_DIR="$JAMBOREE_REPO/skills"
 SKILLS_CONFIG="/home/$MAESTRO_USER/.jam/config/skills.toml"
 BLUEBERRY_JAM_DIR="/home/caleb/blueberry-jam"
+JAM_INSTALL_BIN_SRC="$JAMBOREE_REPO/scripts/jam-install-bin"
 
 # Parsed args
 HUMAN_USER=""
@@ -267,6 +270,41 @@ normalize_human_home_perms() {
 }
 
 # ---------------------------------------------------------------------------
+# /opt/jam/sbin/jam-install-bin wrapper
+#
+# Root-owned helper that lets caleb install first-party release binaries
+# into /opt/jam/bin/ without a password. The Cmnd_Alias in write_sudoers
+# whitelists this exact script path; the script itself validates source
+# and destination so the NOPASSWD grant is narrow.
+# ---------------------------------------------------------------------------
+
+install_jam_install_bin() {
+    if [[ ! -f "$JAM_INSTALL_BIN_SRC" ]]; then
+        die "jam-install-bin source missing: $JAM_INSTALL_BIN_SRC" \
+"    The wrapper lives in the monorepo at scripts/jam-install-bin.
+    Restore it from git, then re-run."
+    fi
+
+    if [[ -f "$JAM_INSTALL_BIN_DEST" ]] \
+       && cmp -s "$JAM_INSTALL_BIN_SRC" "$JAM_INSTALL_BIN_DEST" \
+       && [[ "$(stat -c '%U:%G %a' "$JAM_INSTALL_BIN_DEST")" == "root:root 755" ]]; then
+        pass "jam-install-bin wrapper already correct: $JAM_INSTALL_BIN_DEST"
+        return
+    fi
+
+    info "Installing wrapper: $JAM_INSTALL_BIN_DEST"
+    if [[ $DRY_RUN -eq 1 ]]; then
+        printf "    [dry-run] would install %s -> %s (root:root 0755)\n" \
+            "$JAM_INSTALL_BIN_SRC" "$JAM_INSTALL_BIN_DEST"
+        return
+    fi
+
+    install -d -m 0755 -o root -g root "$(dirname "$JAM_INSTALL_BIN_DEST")"
+    install -m 0755 -o root -g root "$JAM_INSTALL_BIN_SRC" "$JAM_INSTALL_BIN_DEST"
+    pass "jam-install-bin wrapper installed"
+}
+
+# ---------------------------------------------------------------------------
 # Sudoers configuration
 # ---------------------------------------------------------------------------
 
@@ -293,6 +331,12 @@ $HUMAN_USER ALL=($PICKER_USER) NOPASSWD: ALL
 # maestro -> picker
 # Required for harness adapters to spawn Pickers as picker
 $MAESTRO_USER ALL=($PICKER_USER) NOPASSWD: ALL
+
+# $HUMAN_USER -> root for installing first-party binaries into /opt/jam/bin/.
+# Tightly scoped via a path-validating wrapper that only accepts sources
+# under $HUMAN_USER's release-build dir and dest names matching jam-*.
+Cmnd_Alias JAM_INSTALL_BIN = $JAM_INSTALL_BIN_DEST
+$HUMAN_USER ALL=(root) NOPASSWD: JAM_INSTALL_BIN
 
 # Allow these transitions to preserve specified env vars (trace IDs, secrets)
 # SETENV permits the caller to use sudo's -E or --preserve-env=KEY1,KEY2 flags
@@ -655,6 +699,9 @@ main() {
 
     header "Normalizing human home permissions"
     normalize_human_home_perms
+
+    header "Installing /opt/jam/sbin/jam-install-bin wrapper"
+    install_jam_install_bin
 
     header "Installing sudoers config"
     write_sudoers

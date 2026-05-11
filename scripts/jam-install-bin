@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# /opt/jam/sbin/jam-install-bin — root-installed wrapper invoked by caleb via
+# NOPASSWD sudo to install first-party binaries into /opt/jam/bin/.
+#
+# Tightly scoped on purpose: validates that the source lives under the caleb
+# checkout's release-build dir and the dest is a bare `jam-*` filename in
+# /opt/jam/bin/. Cmnd_Alias JAM_INSTALL_BIN in /etc/sudoers.d/jam-users
+# whitelists this exact script.
+#
+# Usage (as caleb):
+#   sudo -n /opt/jam/sbin/jam-install-bin \
+#     /home/caleb/jamboree/target/release/jam-patch-agent \
+#     jam-patch-agent
+
+set -euo pipefail
+
+if [[ $# -ne 2 ]]; then
+    printf 'usage: jam-install-bin <source-binary> <dest-name>\n' >&2
+    exit 64
+fi
+
+SRC="$1"
+NAME="$2"
+SRC_ROOT="/home/caleb/jamboree/target/release"
+DEST_ROOT="/opt/jam/bin"
+
+# Reject path components that could allow escaping the source root.
+case "$SRC" in
+    "$SRC_ROOT"/*) ;;
+    *) printf 'jam-install-bin: source must be under %s\n' "$SRC_ROOT" >&2; exit 65 ;;
+esac
+case "$SRC" in
+    *..*|*/./*|*$'\n'*|*$'\t'*)
+        printf 'jam-install-bin: source path has forbidden components\n' >&2
+        exit 65
+        ;;
+esac
+
+# Dest name must be a bare jam-* filename (no slashes, no leading dot).
+case "$NAME" in
+    jam-*) ;;
+    *) printf 'jam-install-bin: dest name must start with jam-\n' >&2; exit 65 ;;
+esac
+case "$NAME" in
+    */*|.*) printf 'jam-install-bin: dest name must be a bare filename\n' >&2; exit 65 ;;
+esac
+
+if [[ ! -f "$SRC" ]]; then
+    printf 'jam-install-bin: source file does not exist: %s\n' "$SRC" >&2
+    exit 66
+fi
+
+exec /usr/bin/install -o root -g root -m 0755 "$SRC" "$DEST_ROOT/$NAME"

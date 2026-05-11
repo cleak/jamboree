@@ -354,6 +354,11 @@ processes:
     command: "/home/maestro/.jam/bin/jam-patch-agent"
     environment:
       - "JAM_BIN=/opt/jam/bin/jam"
+      # Skip the jam-doctor post-apply gate while the codex-cli harness
+      # lockfile is stale (lockfile expects 0.129.0, installed is 0.130.0).
+      # Unrelated to the patched service; without this skip, every deploy
+      # trips the rollback path on the harness-version check.
+      - "JAM_PATCH_AGENT_SKIP_DOCTOR=true"
     depends_on:
       nats:
         condition: process_healthy

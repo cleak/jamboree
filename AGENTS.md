@@ -84,6 +84,51 @@ sudo ./scripts/install-cli-tools.sh --verify-only
 
 Run after `bootstrap-users.sh` has succeeded. Installs `@openai/codex` and `@anthropic-ai/claude-code` per-user for `caleb`, `maestro`, and `picker`, never as root, because both tools' auto-updaters require write access to their install directory. Wires up `/etc/cron.d/jam-cli-update` to run `cli-tools-update.sh` once a day for each user (4:15 / 4:30 / 4:45 AM, staggered). See `security-setup.md` §4.5.
 
+## Deploying A Tool Service
+
+`jam deploy <service>` is the one-shot path from a working-tree edit to a live service. It does three things:
+
+1. `cargo build --release -p jam-svc-<service>` in this checkout.
+2. Computes a version string (workspace `version` with `-<short-sha>-dirty` suffix if the tree is dirty; overridable with `--version`).
+3. Publishes `patch.staged` over NATS pointing at `target/release/jam-svc-<service>`. `--from <path>` skips the build and uses a pre-built binary.
+
+The `patch-agent` (process-compose service, runs as `maestro`) consumes `patch.staged` and runs §20.3:
+
+- Copies the binary across the user boundary into `/home/maestro/.jam/bin/jam-svc-<service>-<version>`.
+- Starts a candidate on a versioned subject prefix (`tool.<service>.v<version-slug>`).
+- Gates on ping + smoke + `jam doctor` + recent-failed-events.
+- Writes the new revision into the `routing-manifest` NATS KV bucket atomically.
+- Drains the previous candidate.
+
+The CLI waits for `patch.confirmed` or `patch.failed`. On failure it reports an incident under `/home/maestro/.jam/incidents/incident-<ULID>/` with `summary.json`, `health-post-apply.json`, `rollback-command.json`, `llm-diagnosis.json`, and the trailing 1000 journal events.
+
+### Where Binaries Live
+
+- Runtime, per-version patches: `/home/maestro/.jam/bin/jam-svc-<service>-<version>`. Written by patch-agent during `apply`. The routing manifest points at one of these.
+- Canonical first-install location: `/opt/jam/bin/jam-<name>`. Written by `scripts/install-substrate.sh`. Used for fresh substrate brings, including for `patch-agent` itself.
+
+Caleb has NOPASSWD sudo for installing into `/opt/jam/bin/` via the tightly-scoped `scripts/jam-install-bin` wrapper (installed to `/opt/jam/sbin/jam-install-bin` by `bootstrap-users.sh`, whitelisted in the generated sudoers as `Cmnd_Alias JAM_INSTALL_BIN`). The wrapper refuses sources outside `target/release/` and dest names that don't start with `jam-`.
+
+### First-Patch Rollback Gotcha
+
+If a post-apply check fails on the *first* patch ever applied to a service, the mechanical rollback fails with `current routing manifest has no previous_manifest_id` (there is no previous revision to revert to). The atomic swap has already happened by that point, so the new binary is live; only the rollback-on-failure path is broken. Treat reported failures on a first-deploy as "verify the new code is actually serving requests" (e.g. `strings $bin | grep <new-symbol>` and `jam health ping <service>`) before assuming the deploy did not land.
+
+### Process-Compose Surfaces
+
+Run as `maestro`:
+
+```bash
+sudo -u maestro /opt/jam/bin/process-compose project update \
+    -f /home/caleb/jamboree/process-compose.yaml \
+    -u /home/maestro/.jam/process-compose.sock -U
+sudo -u maestro /opt/jam/bin/process-compose process get patch-agent \
+    -u /home/maestro/.jam/process-compose.sock -U
+sudo -u maestro /opt/jam/bin/process-compose process restart patch-agent \
+    -u /home/maestro/.jam/process-compose.sock -U
+```
+
+The patch-agent must be running for `jam deploy` to make progress; the CLI will time out otherwise.
+
 ## Load-Bearing Principles To Preserve
 
 When editing the spec or writing related code, these v5 principles are non-negotiable. Cite by number in code comments per §2 when relevant.

@@ -82,6 +82,30 @@ sudo ./scripts/install-cli-tools.sh --verify-only
 
 Run after `bootstrap-users.sh` has succeeded. Installs `@openai/codex` and `@anthropic-ai/claude-code` per-user for `caleb`, `maestro`, and `picker` — never as root, because both tools' auto-updaters require write access to their install directory. Wires up `/etc/cron.d/jam-cli-update` to run `cli-tools-update.sh` once a day for each user (4:15 / 4:30 / 4:45 AM, staggered). See `security-setup.md` §4.5.
 
+## GitHub App auth: installation vs. user-to-server
+
+`jam-svc-repo` uses *two* GitHub App auth modes for different paths (see `graph/decisions/dec-github-app-not-pat.md` and its 2026-05-11 addendum).
+
+- **Installation token (server-to-server).** Used for read-heavy paths: PR-status polling, comment fetching, ETag-conditional reads. Gets the App's 15K/hour rate ceiling and per-installation isolation. Configured via `JAM_GITHUB_APP_ID` / `JAM_GITHUB_APP_INSTALLATION_ID` / `JAM_GITHUB_APP_PRIVATE_KEY` env vars or the matching `jam/pickers/github-app-*` pass keys.
+- **User-to-server token (`ghu_*`).** Used for *write* paths: `gh pr create`, `git push`, PR-comment writes. Authorizes the App on behalf of a real user (`cleak`), so the resulting PRs land with `is_bot:false` and reviewer bots (CodeRabbit) auto-review through the normal path. Configured via `JAM_GITHUB_USER_TOKEN` or `jam/pickers/github-user-token` in maestro's pass store.
+
+When the user token is missing, `jam-svc-repo` falls back to the installation token on the write path *and* posts `@coderabbitai full review` after PR open as a partial workaround — but CodeRabbit's incremental-skip then prevents further auto-reviews on subsequent pushes. The user token is the only complete fix.
+
+### One-time setup
+
+1. In the App settings (https://github.com/settings/apps/<your-app>) → **Optional Features**, uncheck **"Expire user authorization tokens"**. Without this, the `ghu_*` token expires every 8 hours and jam-svc-repo will silently fall back to installation-token + the comment-trigger workaround once it expires.
+2. As `caleb`, run the device-flow helper:
+   ```bash
+   ./scripts/authorize-github-user-token.sh
+   ```
+   It prompts for the App's Client ID, opens a device-code flow, and pipes the resulting `ghu_*` token into maestro's pass at `jam/pickers/github-user-token`. It warns if a `refresh_token` comes back (meaning step 1 wasn't done).
+3. Hot-patch `jam-svc-repo` to pick up the new token:
+   ```bash
+   jam deploy repo
+   ```
+
+Verify it worked: the next orchestrator-opened PR should show `author.is_bot:false` matching the authorizing user, and CodeRabbit should auto-review without any manual trigger.
+
 ## Deploying a tool service (`jam deploy`)
 
 `jam deploy <service>` is the one-shot path from a working-tree edit to a live service. It does three things:

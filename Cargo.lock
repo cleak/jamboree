@@ -1269,7 +1269,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
- "sha2",
  "tempfile",
  "tokio",
 ]
@@ -1421,7 +1420,6 @@ dependencies = [
  "jam-trace",
  "serde",
  "serde_json",
- "sha2",
  "tempfile",
  "thiserror 2.0.18",
  "time",
@@ -1787,6 +1785,8 @@ name = "jam-tools-core"
 version = "0.1.0"
 dependencies = [
  "jam-untrusted",
+ "sha2",
+ "tempfile",
 ]
 
 [[package]]

@@ -13,6 +13,10 @@ path = "src/lib.rs"
 
 [dependencies]
 jam-untrusted = { path = "../jam-untrusted" }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.14"
 
 [lints]
 workspace = true

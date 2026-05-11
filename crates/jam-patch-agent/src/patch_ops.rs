@@ -17,9 +17,7 @@ use jam_nats::JamNats;
 use jam_tools_core::paths::jam_home;
 use jam_trace::TraceCtx;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::fs::{self, File, OpenOptions};
-use std::io::Read;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 #[cfg(unix)]
@@ -778,22 +776,7 @@ fn patch_drain_timeout() -> Duration {
         )
 }
 
-/// Hash the file at `path` with SHA-256 and return lowercase hex.
-pub fn sha256_file_hex(path: &Path) -> Result<String, String> {
-    let mut file = File::open(path).map_err(|err| format!("open {}: {err}", path.display()))?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0u8; 8192];
-    loop {
-        let read = file
-            .read(&mut buffer)
-            .map_err(|err| format!("read {}: {err}", path.display()))?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    Ok(format!("{:x}", hasher.finalize()))
-}
+use jam_tools_core::hashing::sha256_file_hex;
 
 #[cfg(test)]
 mod tests {

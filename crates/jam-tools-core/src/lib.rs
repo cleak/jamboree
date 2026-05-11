@@ -9,6 +9,9 @@
 /// Shared provider and execution trait contracts.
 pub mod contracts;
 
+/// Shared file-hashing helpers.
+pub mod hashing;
+
 /// Shared runtime path resolution helpers.
 pub mod paths;
 

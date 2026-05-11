@@ -19,10 +19,9 @@ use jam_ui_server::trace_replay::{find_traces_in_journal, TraceFindResult};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use serde_yaml::{Mapping, Value as YamlValue};
-use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
@@ -758,18 +757,12 @@ fn run_patch(action: PatchAction) -> ExitCode {
 
     match result {
         Ok(report) => {
-            println!("outcome: {}", report.outcome);
+            println!("outcome: {}", report.outcome.as_str());
             println!("service: {}", report.service);
             if !report.detail.is_empty() {
                 println!("detail: {}", report.detail);
             }
-            // Apply success: confirmed or rolled-back-successfully (the latter
-            // means the patch failed but the rollback restored health).
-            // Rollback success: rolled-back (no post-rollback verify path).
-            if matches!(
-                report.outcome.as_str(),
-                "confirmed" | "rolled-back-successfully" | "rolled-back"
-            ) {
+            if report.outcome.is_success() {
                 ExitCode::SUCCESS
             } else {
                 ExitCode::from(1)
@@ -782,9 +775,32 @@ fn run_patch(action: PatchAction) -> ExitCode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PatchOutcome {
+    Confirmed,
+    Failed,
+    RolledBack,
+    RolledBackSuccessfully,
+}
+
+impl PatchOutcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            PatchOutcome::Confirmed => "confirmed",
+            PatchOutcome::Failed => "failed",
+            PatchOutcome::RolledBack => "rolled-back",
+            PatchOutcome::RolledBackSuccessfully => "rolled-back-successfully",
+        }
+    }
+
+    fn is_success(self) -> bool {
+        !matches!(self, PatchOutcome::Failed)
+    }
+}
+
 #[derive(Debug, Clone)]
 struct PatchTerminalReport {
-    outcome: String,
+    outcome: PatchOutcome,
     service: String,
     detail: String,
 }
@@ -896,6 +912,15 @@ fn parse_health_ping_response(
     })
 }
 
+struct PatchPublishContext {
+    nats_url: String,
+    nats_token: Option<String>,
+    trace_ctx: TraceCtx,
+    actor: String,
+    service: String,
+    timeout: Duration,
+}
+
 fn run_patch_apply(
     service: String,
     version: String,
@@ -908,29 +933,23 @@ fn run_patch_apply(
     if timeout_secs == 0 {
         return Err("--timeout-secs must be greater than zero".into());
     }
-    let nats_url = nats_url.unwrap_or_else(default_nats_url);
-    let nats_token = resolve_nats_token();
-    let actor = format!("human:{}", current_user());
     let staging_path = staging_path.unwrap_or_else(|| {
         jam_home()
             .join("staging")
             .join(format!("jam-svc-{service}-{version}"))
     });
-    let trace_ctx = TraceCtx::new_root(
-        "cli.patch.apply",
-        format!("apply {service} tool service version {version}"),
-    );
-
-    run_async_value(publish_apply_and_wait(
-        nats_url,
-        nats_token,
-        trace_ctx,
-        actor,
+    let ctx = PatchPublishContext {
+        nats_url: nats_url.unwrap_or_else(default_nats_url),
+        nats_token: resolve_nats_token(),
+        trace_ctx: TraceCtx::new_root(
+            "cli.patch.apply",
+            format!("apply {service} tool service version {version}"),
+        ),
+        actor: format!("human:{}", current_user()),
         service,
-        version,
-        staging_path,
-        Duration::from_secs(timeout_secs),
-    ))
+        timeout: Duration::from_secs(timeout_secs),
+    };
+    run_async_value(publish_apply_and_wait(ctx, version, staging_path))
 }
 
 fn run_patch_rollback(
@@ -946,34 +965,24 @@ fn run_patch_rollback(
     if timeout_secs == 0 {
         return Err("--timeout-secs must be greater than zero".into());
     }
-    let nats_url = nats_url.unwrap_or_else(default_nats_url);
-    let nats_token = resolve_nats_token();
-    let actor = format!("human:{}", current_user());
-    let trace_ctx = TraceCtx::new_root(
-        "cli.patch.rollback",
-        format!("roll back {service} tool service: {reason}"),
-    );
-    run_async_value(publish_rollback_and_wait(
-        nats_url,
-        nats_token,
-        trace_ctx,
-        actor,
+    let ctx = PatchPublishContext {
+        nats_url: nats_url.unwrap_or_else(default_nats_url),
+        nats_token: resolve_nats_token(),
+        trace_ctx: TraceCtx::new_root(
+            "cli.patch.rollback",
+            format!("roll back {service} tool service: {reason}"),
+        ),
+        actor: format!("human:{}", current_user()),
         service,
-        reason,
-        Duration::from_secs(timeout_secs),
-    ))
+        timeout: Duration::from_secs(timeout_secs),
+    };
+    run_async_value(publish_rollback_and_wait(ctx, reason))
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn publish_apply_and_wait(
-    nats_url: String,
-    nats_token: Option<String>,
-    trace_ctx: TraceCtx,
-    actor: String,
-    service: String,
+    ctx: PatchPublishContext,
     version: String,
     staging_path: PathBuf,
-    timeout: Duration,
 ) -> Result<PatchTerminalReport, String> {
     use jam_events::generated::{
         PatchConfirmed, PatchFailed, PatchRolledBackSuccessfully, PatchStaged,
@@ -987,14 +996,14 @@ async fn publish_apply_and_wait(
     validate_executable_for_publish(&staging_path)?;
     let binary_sha256 = sha256_file_hex(&staging_path)?;
 
-    let nats = JamNats::connect(&nats_url, nats_token)
+    let nats = JamNats::connect(&ctx.nats_url, ctx.nats_token.clone())
         .await
-        .map_err(|err| format!("connect {nats_url}: {err}"))?;
+        .map_err(|err| format!("connect {}: {err}", ctx.nats_url))?;
 
-    // Subscribe before publishing so we don't miss the terminal event. For an
-    // apply, patch.rolled-back is intermediate — the agent emits it during
-    // mechanical rollback, then post-rollback verify produces either
-    // patch.rolled-back-successfully or patch.failed.
+    // Subscribe before publishing so we don't miss the terminal event.
+    // patch.rolled-back is intermediate during apply: the agent emits it
+    // during mechanical rollback, then post-rollback verify decides between
+    // rolled-back-successfully and failed.
     let confirmed_sub = nats
         .client()
         .subscribe(PatchConfirmed::EVENT_TYPE)
@@ -1012,57 +1021,52 @@ async fn publish_apply_and_wait(
         .map_err(|err| format!("subscribe patch.rolled-back-successfully: {err}"))?;
 
     let staged = PatchStaged {
-        service: service.clone(),
-        version: version.clone(),
+        service: ctx.service.clone(),
+        version,
         staging_path: staging_path.display().to_string(),
         binary_sha256,
-        requested_by: actor.clone(),
+        requested_by: ctx.actor.clone(),
         ts: Utc::now(),
     };
     let envelope = EventEnvelope::new(
         PatchStaged::EVENT_TYPE,
         PatchStaged::EVENT_SUBTYPE_VERSION,
         0,
-        trace_ctx.trace_id.to_string(),
-        actor.clone(),
+        ctx.trace_ctx.trace_id.to_string(),
+        ctx.actor.clone(),
         staged,
     );
-    nats.publish_traced(PatchStaged::EVENT_TYPE, &envelope, &trace_ctx)
+    nats.publish_traced(PatchStaged::EVENT_TYPE, &envelope, &ctx.trace_ctx)
         .await
         .map_err(|err| format!("publish patch.staged: {err}"))?;
     eprintln!(
         "patch.staged published; waiting up to {}s for the agent to finish",
-        timeout.as_secs()
+        ctx.timeout.as_secs()
     );
 
     wait_for_apply_terminal(
         confirmed_sub,
         failed_sub,
         rb_success_sub,
-        &trace_ctx.trace_id.to_string(),
-        &service,
-        timeout,
+        &ctx.trace_ctx.trace_id.to_string(),
+        &ctx.service,
+        ctx.timeout,
     )
     .await
 }
 
 async fn publish_rollback_and_wait(
-    nats_url: String,
-    nats_token: Option<String>,
-    trace_ctx: TraceCtx,
-    actor: String,
-    service: String,
+    ctx: PatchPublishContext,
     reason: String,
-    timeout: Duration,
 ) -> Result<PatchTerminalReport, String> {
     use jam_events::generated::{PatchFailed, PatchRollbackRequested, PatchRolledBack};
 
-    let nats = JamNats::connect(&nats_url, nats_token)
+    let nats = JamNats::connect(&ctx.nats_url, ctx.nats_token.clone())
         .await
-        .map_err(|err| format!("connect {nats_url}: {err}"))?;
+        .map_err(|err| format!("connect {}: {err}", ctx.nats_url))?;
 
-    // For an explicit rollback request the agent runs perform_rollback only
-    // (no post-rollback verify), so patch.rolled-back is the terminal event.
+    // Explicit rollback skips the post-rollback verify, so patch.rolled-back
+    // is terminal here (unlike the apply path).
     let failed_sub = nats
         .client()
         .subscribe(PatchFailed::EVENT_TYPE)
@@ -1075,33 +1079,33 @@ async fn publish_rollback_and_wait(
         .map_err(|err| format!("subscribe patch.rolled-back: {err}"))?;
 
     let payload = PatchRollbackRequested {
-        service: service.clone(),
+        service: ctx.service.clone(),
         reason,
-        requested_by: actor.clone(),
+        requested_by: ctx.actor.clone(),
         ts: Utc::now(),
     };
     let envelope = EventEnvelope::new(
         PatchRollbackRequested::EVENT_TYPE,
         PatchRollbackRequested::EVENT_SUBTYPE_VERSION,
         0,
-        trace_ctx.trace_id.to_string(),
-        actor.clone(),
+        ctx.trace_ctx.trace_id.to_string(),
+        ctx.actor.clone(),
         payload,
     );
-    nats.publish_traced(PatchRollbackRequested::EVENT_TYPE, &envelope, &trace_ctx)
+    nats.publish_traced(PatchRollbackRequested::EVENT_TYPE, &envelope, &ctx.trace_ctx)
         .await
         .map_err(|err| format!("publish patch.rollback-requested: {err}"))?;
     eprintln!(
         "patch.rollback-requested published; waiting up to {}s for the agent",
-        timeout.as_secs()
+        ctx.timeout.as_secs()
     );
 
     wait_for_rollback_terminal(
         rolled_back_sub,
         failed_sub,
-        &trace_ctx.trace_id.to_string(),
-        &service,
-        timeout,
+        &ctx.trace_ctx.trace_id.to_string(),
+        &ctx.service,
+        ctx.timeout,
     )
     .await
 }
@@ -1132,9 +1136,9 @@ async fn wait_for_apply_terminal(
                 let Some(msg) = msg else {
                     return Err("patch.confirmed subscription closed unexpectedly".into());
                 };
-                if let Some(env) = decode_envelope::<PatchConfirmed>(&msg.payload, trace_id, service) {
+                if let Some(env) = decode_envelope::<PatchConfirmed>(&msg.payload, trace_id, service, |p| &p.service) {
                     return Ok(PatchTerminalReport {
-                        outcome: "confirmed".into(),
+                        outcome: PatchOutcome::Confirmed,
                         service: env.payload.service,
                         detail: format!("version {} confirmed by {} checks", env.payload.version, env.payload.checks_run),
                     });
@@ -1144,9 +1148,9 @@ async fn wait_for_apply_terminal(
                 let Some(msg) = msg else {
                     return Err("patch.failed subscription closed unexpectedly".into());
                 };
-                if let Some(env) = decode_envelope::<PatchFailed>(&msg.payload, trace_id, service) {
+                if let Some(env) = decode_envelope::<PatchFailed>(&msg.payload, trace_id, service, |p| &p.service) {
                     return Ok(PatchTerminalReport {
-                        outcome: "failed".into(),
+                        outcome: PatchOutcome::Failed,
                         service: env.payload.service,
                         detail: format!("incident {} at {}: {}", env.payload.incident_id, env.payload.incident_dir, env.payload.summary),
                     });
@@ -1156,9 +1160,9 @@ async fn wait_for_apply_terminal(
                 let Some(msg) = msg else {
                     return Err("patch.rolled-back-successfully subscription closed unexpectedly".into());
                 };
-                if let Some(env) = decode_envelope::<PatchRolledBackSuccessfully>(&msg.payload, trace_id, service) {
+                if let Some(env) = decode_envelope::<PatchRolledBackSuccessfully>(&msg.payload, trace_id, service, |p| &p.service) {
                     return Ok(PatchTerminalReport {
-                        outcome: "rolled-back-successfully".into(),
+                        outcome: PatchOutcome::RolledBackSuccessfully,
                         service: env.payload.service,
                         detail: format!("restored to version {}", env.payload.version),
                     });
@@ -1193,9 +1197,9 @@ async fn wait_for_rollback_terminal(
                 let Some(msg) = msg else {
                     return Err("patch.rolled-back subscription closed unexpectedly".into());
                 };
-                if let Some(env) = decode_envelope::<PatchRolledBack>(&msg.payload, trace_id, service) {
+                if let Some(env) = decode_envelope::<PatchRolledBack>(&msg.payload, trace_id, service, |p| &p.service) {
                     return Ok(PatchTerminalReport {
-                        outcome: "rolled-back".into(),
+                        outcome: PatchOutcome::RolledBack,
                         service: env.payload.service,
                         detail: format!(
                             "{} -> {}: {}",
@@ -1208,9 +1212,9 @@ async fn wait_for_rollback_terminal(
                 let Some(msg) = msg else {
                     return Err("patch.failed subscription closed unexpectedly".into());
                 };
-                if let Some(env) = decode_envelope::<PatchFailed>(&msg.payload, trace_id, service) {
+                if let Some(env) = decode_envelope::<PatchFailed>(&msg.payload, trace_id, service, |p| &p.service) {
                     return Ok(PatchTerminalReport {
-                        outcome: "failed".into(),
+                        outcome: PatchOutcome::Failed,
                         service: env.payload.service,
                         detail: format!("incident {} at {}: {}", env.payload.incident_id, env.payload.incident_dir, env.payload.summary),
                     });
@@ -1220,43 +1224,20 @@ async fn wait_for_rollback_terminal(
     }
 }
 
-fn decode_envelope<P>(payload: &[u8], trace_id: &str, service: &str) -> Option<EventEnvelope<P>>
+fn decode_envelope<P>(
+    payload: &[u8],
+    trace_id: &str,
+    service: &str,
+    service_of: impl Fn(&P) -> &str,
+) -> Option<EventEnvelope<P>>
 where
-    P: jam_events::generated::Event + serde::de::DeserializeOwned + EnvelopeService,
+    P: jam_events::generated::Event + serde::de::DeserializeOwned,
 {
     let envelope: EventEnvelope<P> = serde_json::from_slice(payload).ok()?;
-    if envelope.trace_id != trace_id {
-        return None;
-    }
-    if envelope.payload.service() != service {
+    if envelope.trace_id != trace_id || service_of(&envelope.payload) != service {
         return None;
     }
     Some(envelope)
-}
-
-trait EnvelopeService {
-    fn service(&self) -> &str;
-}
-
-impl EnvelopeService for jam_events::generated::PatchConfirmed {
-    fn service(&self) -> &str {
-        &self.service
-    }
-}
-impl EnvelopeService for jam_events::generated::PatchFailed {
-    fn service(&self) -> &str {
-        &self.service
-    }
-}
-impl EnvelopeService for jam_events::generated::PatchRolledBack {
-    fn service(&self) -> &str {
-        &self.service
-    }
-}
-impl EnvelopeService for jam_events::generated::PatchRolledBackSuccessfully {
-    fn service(&self) -> &str {
-        &self.service
-    }
 }
 
 fn validate_executable_for_publish(path: &Path) -> Result<(), String> {
@@ -1279,21 +1260,7 @@ fn validate_executable_for_publish(path: &Path) -> Result<(), String> {
 }
 
 
-fn sha256_file_hex(path: &Path) -> Result<String, String> {
-    let mut file = File::open(path).map_err(|err| format!("open {}: {err}", path.display()))?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0u8; 8192];
-    loop {
-        let read = file
-            .read(&mut buffer)
-            .map_err(|err| format!("read {}: {err}", path.display()))?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    Ok(format!("{:x}", hasher.finalize()))
-}
+use jam_tools_core::hashing::sha256_file_hex;
 
 fn validate_service_arg(service: &str) -> Result<(), String> {
     validate_segment(service, "service", |ch| {
@@ -3357,12 +3324,16 @@ fn run_deploy(
 ) -> ExitCode {
     match run_deploy_inner(service, version, from, nats_url) {
         Ok(report) => {
-            println!("outcome: {}", report.outcome);
+            println!("outcome: {}", report.outcome.as_str());
             println!("service: {}", report.service);
             if !report.detail.is_empty() {
                 println!("detail: {}", report.detail);
             }
-            if report.outcome == "confirmed" {
+            // For `jam deploy`, only patch.confirmed is a real success — a
+            // rollback means the new version didn't take, which is a failure
+            // from the operator's perspective even though the system is
+            // healthy.
+            if report.outcome == PatchOutcome::Confirmed {
                 ExitCode::SUCCESS
             } else {
                 ExitCode::from(1)

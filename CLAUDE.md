@@ -93,7 +93,10 @@ When the user token is missing, `jam-svc-repo` falls back to the installation to
 
 ### One-time setup
 
-1. In the App settings (https://github.com/settings/apps/<your-app>) → **Optional Features**, uncheck **"Expire user authorization tokens"**. Without this, the `ghu_*` token expires every 8 hours and jam-svc-repo will silently fall back to installation-token + the comment-trigger workaround once it expires.
+1. In the App settings (https://github.com/settings/apps/<your-app>):
+   - Under **"Identifying and authorizing users"**, check **"Enable Device Flow"** (required for the headless auth helper).
+   - Under **Optional Features**, click **"Opt-out"** next to **"User-to-server token expiration"**. Without this, the `ghu_*` token expires every 8 hours and jam-svc-repo will silently fall back to installation-token + the comment-trigger workaround once it expires.
+   - Save changes.
 2. As `caleb`, run the device-flow helper:
    ```bash
    ./scripts/authorize-github-user-token.sh

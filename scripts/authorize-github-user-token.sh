@@ -14,9 +14,13 @@
 #
 # Prerequisites:
 #   - bootstrap-users.sh + init-maestro-keyring.sh have run.
-#   - The GitHub App's "Expire user authorization tokens" Optional Feature
-#     is turned OFF (App settings → Optional Features). Without that, the
-#     token expires every 8 hours and this script's output is short-lived.
+#   - The GitHub App has Device Flow enabled (App settings →
+#     "Identifying and authorizing users" → check "Enable Device Flow").
+#   - The GitHub App's "User-to-server token expiration" has been
+#     opted out (App settings → Optional Features → next to
+#     "User-to-server token expiration", click "Opt-out"). Without that,
+#     the token expires every 8 hours and this script's output is
+#     short-lived.
 #   - The App's Client ID is known. Find it at
 #     https://github.com/settings/apps/<your-app> → "About" section.
 #
@@ -118,14 +122,16 @@ poll_for_token() {
     interval="$(jq -r '.interval'             <<<"$device_response")"
     expires_in="$(jq -r '.expires_in'         <<<"$device_response")"
 
-    header "Authorize the App"
-    printf "\n"
-    printf "    Visit:       %s\n" "$verification_uri"
-    printf "    Enter code:  \033[1m%s\033[0m\n" "$user_code"
-    printf "    Expires in:  %d seconds\n" "$expires_in"
-    printf "\n"
-    info "Sign in as the user you want PRs attributed to (e.g. cleak)."
-    info "Approve the requested scopes, then return here. Polling..."
+    # All user-facing chatter goes to stderr — stdout is captured by the
+    # caller's $(...) substitution and reserved for the final JSON payload.
+    printf "\n\033[1m%s\033[0m\n" "Authorize the App" >&2
+    printf "\n" >&2
+    printf "    Visit:       %s\n" "$verification_uri" >&2
+    printf "    Enter code:  \033[1m%s\033[0m\n" "$user_code" >&2
+    printf "    Expires in:  %d seconds\n" "$expires_in" >&2
+    printf "\n" >&2
+    info "Sign in as the user you want PRs attributed to (e.g. cleak)." >&2
+    info "Approve the requested scopes, then return here. Polling..." >&2
 
     local deadline=$(( $(date +%s) + expires_in ))
     while (( $(date +%s) < deadline )); do
@@ -182,8 +188,8 @@ store_token() {
     pass "Token stored at $PASS_KEY (in maestro's pass store)"
 
     if [[ -n "$refresh_token" ]]; then
-        warn "GitHub returned a refresh_token — the App still has 'Expire user authorization tokens' enabled."
-        warn "Toggle it OFF under App settings → Optional Features to get a permanent token."
+        warn "GitHub returned a refresh_token — the App still has User-to-server token expiration enabled."
+        warn "Click 'Opt-out' next to 'User-to-server token expiration' under App settings → Optional Features to get a permanent token."
         warn "Otherwise this token expires in ~8h and jam-svc-repo will fall back to the installation token + the [bot] author."
     else
         pass "Token is non-expiring (no refresh_token returned)."

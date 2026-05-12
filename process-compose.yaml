@@ -103,7 +103,7 @@ processes:
   jam-svc-session:
     description: "Session tool service — spawn-picker, lifecycle."
     user: maestro
-    command: "/opt/jam/bin/jam-svc-session"
+    command: "/home/maestro/.jam/bin/jam-svc-session"
     environment:
       - JAM_HARNESS_LOCKFILE_POLICY=warn
     depends_on:
@@ -270,7 +270,7 @@ processes:
 
   task-lifecycle-handler:
     user: maestro
-    command: "/opt/jam/bin/jam-task-lifecycle"
+    command: "/home/maestro/.jam/bin/jam-task-lifecycle"
     depends_on:
       nats:
         condition: process_healthy

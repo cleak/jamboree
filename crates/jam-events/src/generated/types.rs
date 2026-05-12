@@ -378,6 +378,26 @@ impl Event for PatchStaged {
     const EVENT_SUBTYPE_VERSION: u32 = 1;
 }
 
+/// Post-picker coordinator determined the worktree is not ready to ship as-is (or a downstream signal like CodeRabbit / CI failure arrived). A continuation-spawner resumes the same picker session with the supplied prompt. See dec-post-picker-coordination.
+///
+/// Event type: `picker.continuation-needed` (version 1).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PickerContinuationNeeded {
+    pub task_id: String,
+    pub session_id: String,
+    pub worktree_path: String,
+    pub reason: String,
+    pub detail: String,
+    pub prompt: String,
+    pub attempt: u32,
+    pub requested_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl Event for PickerContinuationNeeded {
+    const EVENT_TYPE: &'static str = "picker.continuation-needed";
+    const EVENT_SUBTYPE_VERSION: u32 = 1;
+}
+
 /// Picker raised an internal error before exit — Maestro wakes on this.
 ///
 /// Event type: `picker.errored` (version 1).
@@ -463,7 +483,7 @@ impl Event for PickerKilled {
 
 /// Emitted by jam-svc-session after a Picker process is launched (§24.3 step 10).
 ///
-/// Event type: `picker.spawned` (version 1).
+/// Event type: `picker.spawned` (version 2).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PickerSpawned {
     pub task_id: String,
@@ -478,11 +498,15 @@ pub struct PickerSpawned {
     pub sandbox_backend: String,
     pub sandbox_profile: String,
     pub task_class: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub codex_conversation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_session_id: Option<String>,
 }
 
 impl Event for PickerSpawned {
     const EVENT_TYPE: &'static str = "picker.spawned";
-    const EVENT_SUBTYPE_VERSION: u32 = 1;
+    const EVENT_SUBTYPE_VERSION: u32 = 2;
 }
 
 /// stall-detector escalation (§4.4.6): token-idle, tool-loop, or no-progress.

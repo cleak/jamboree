@@ -7,6 +7,8 @@
 
 #![deny(missing_docs)]
 
+mod post_picker;
+
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -97,13 +99,13 @@ impl LifecycleConfig {
 }
 
 #[derive(Debug, Deserialize)]
-struct JournalEnvelope {
-    event_type: String,
-    timestamp: DateTime<Utc>,
-    trace_id: String,
+pub(crate) struct JournalEnvelope {
+    pub(crate) event_type: String,
+    pub(crate) timestamp: DateTime<Utc>,
+    pub(crate) trace_id: String,
     #[serde(default)]
-    parent_trace_id: Option<String>,
-    payload: serde_json::Value,
+    pub(crate) parent_trace_id: Option<String>,
+    pub(crate) payload: serde_json::Value,
 }
 
 #[derive(Debug)]
@@ -196,6 +198,25 @@ async fn handle_message(
     };
     let envelope = parse_envelope(&msg.payload)?;
     debug!(event_type = %envelope.event_type, "received lifecycle event");
+
+    // Side effect: post-picker coordination. Independent of the Tempyr-node
+    // update — even if the node write fails (e.g. concurrent edit), we still
+    // want the open-pr-or-continuation decision to fire.
+    match envelope.event_type.as_str() {
+        "picker.exited" => {
+            post_picker::handle_picker_exited(nats, &envelope, &ctx).await;
+        }
+        "picker.continuation-needed" => {
+            post_picker::handle_continuation_needed(nats, &envelope, &ctx).await;
+        }
+        "pr.review-received" => {
+            post_picker::handle_pr_review_received(nats, &envelope, &ctx).await;
+        }
+        "pr.ci.status-changed" => {
+            post_picker::handle_pr_ci_status_changed(nats, &envelope, &ctx).await;
+        }
+        _ => {}
+    }
 
     let Some(result) = apply_lifecycle_event(&state.config, &envelope)? else {
         return Ok(());

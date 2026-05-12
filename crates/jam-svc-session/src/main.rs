@@ -385,6 +385,11 @@ struct PickerHandle {
     resource_scope: Option<String>,
     spawned_at: DateTime<Utc>,
     dry_run: bool,
+    /// session_id of the prior picker session this one resumes, when set.
+    /// Surfaced on `picker.spawned` so the coordinator can chain continuation
+    /// attempts and the loop-guard can count them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parent_session_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -675,6 +680,10 @@ async fn dispatch(
             Ok(handle) => Response::Ok(serde_json::to_value(handle).expect("handle serializes")),
             Err(err) => error_response(err),
         },
+        "resume-picker" => match resume_picker(payload, state, ctx, nats).await {
+            Ok(handle) => Response::Ok(serde_json::to_value(handle).expect("handle serializes")),
+            Err(err) => error_response(err),
+        },
         "inspect-picker" => match inspect_picker(payload, state).await {
             Ok(record) => Response::Ok(serde_json::to_value(record).expect("record serializes")),
             Err(err) => error_response(err),
@@ -762,6 +771,57 @@ async fn spawn_picker(
         ));
     }
 
+    launch_picker(spec, worktree_path, picker_trace, state, ctx, nats).await
+}
+
+/// Resume an earlier picker session (codex `exec resume --last`) in the
+/// worktree associated with `task_id`. Skips worktree creation and lockfile
+/// drift checks because the worktree already exists. See
+/// graph/decisions/dec-post-picker-coordination.md.
+async fn resume_picker(
+    payload: &[u8],
+    state: &SessionState,
+    ctx: &TraceCtx,
+    nats: &JamNats,
+) -> Result<PickerHandle, SessionError> {
+    let input: ResumePickerInput = serde_json::from_slice(payload).map_err(|err| {
+        SessionError::protocol(
+            "invalid-input",
+            format!("tool.session.resume-picker payload is invalid JSON: {err}"),
+            "Send {\"task_id\":\"...\",\"prompt\":\"...\"}.",
+            "comp-jam-svc-session-resume",
+        )
+    })?;
+    let spec = SpawnSpec::for_resume(input)?;
+
+    let picker_trace = TraceCtx::child(
+        ctx,
+        "session.resume-picker",
+        format!("resume Picker for {}", spec.task_id),
+    );
+
+    // Derive worktree path from the standard convention. Refuse if the
+    // directory is not readable by picker — that signals an inconsistency
+    // (worktree purged, task_id misspelled, etc.) which should be loud.
+    let worktree_root = std::env::var_os("JAM_WORKTREE_ROOT")
+        .map_or_else(|| PathBuf::from("/home/picker/workers"), PathBuf::from);
+    let raw_path = worktree_root.join(&spec.task_id);
+    let worktree_path = validate_worktree_path(&raw_path.to_string_lossy())?;
+
+    launch_picker(spec, worktree_path, picker_trace, state, ctx, nats).await
+}
+
+/// Body shared by `spawn_picker` and `resume_picker`. Writes picker metadata
+/// into the worktree, builds the launch command for the configured harness,
+/// spawns the process, and registers all the watchers + journal events.
+async fn launch_picker(
+    spec: SpawnSpec,
+    worktree_path: PathBuf,
+    picker_trace: TraceCtx,
+    state: &SessionState,
+    ctx: &TraceCtx,
+    nats: &JamNats,
+) -> Result<PickerHandle, SessionError> {
     write_picker_metadata(&worktree_path, &spec, &picker_trace, ctx)?;
 
     let session_id = format!("{}:{}", spec.harness, jam_trace::TraceId::new());
@@ -804,6 +864,7 @@ async fn spawn_picker(
         resource_scope,
         spawned_at,
         dry_run: spec.dry_run,
+        parent_session_id: spec.parent_session_id.clone(),
     };
 
     publish_picker_spawned(nats, &handle, &picker_trace, ctx).await?;
@@ -862,6 +923,16 @@ struct SpawnSpec {
     reasoning_effort: Option<String>,
     budget_usd: Option<f64>,
     dry_run: bool,
+    /// True when this spawn is a continuation of an earlier picker session
+    /// in the same worktree. Causes the codex command to use
+    /// `exec resume --last` (cwd-filtered by codex). Worktree creation
+    /// and harness lockfile verification are skipped because the worktree
+    /// must already exist from the original spawn.
+    resume_from_last: bool,
+    /// session_id of the picker we're resuming, journaled on the new
+    /// `picker.spawned` event as `parent_session_id` so the coordinator
+    /// can chain continuation attempts.
+    parent_session_id: Option<String>,
 }
 
 impl SpawnSpec {
@@ -970,8 +1041,60 @@ impl SpawnSpec {
             reasoning_effort: input.reasoning_effort,
             budget_usd: input.budget_usd,
             dry_run,
+            resume_from_last: false,
+            parent_session_id: None,
         })
     }
+
+    /// Build a SpawnSpec for resuming a previous codex session in the same
+    /// worktree. `prompt` becomes the new user message; codex's
+    /// `exec resume --last` cwd-filter finds the prior session.
+    fn for_resume(input: ResumePickerInput) -> Result<Self, SessionError> {
+        validate_token("task_id", &input.task_id, TASK_ID_MAX_LEN)?;
+        if input.prompt.trim().is_empty() {
+            return Err(SessionError::protocol(
+                "invalid-prompt",
+                "resume-picker prompt must not be empty",
+                "Send a non-empty prompt for the resumed session.",
+                "comp-jam-svc-session-resume",
+            ));
+        }
+        let task_class = input
+            .task_class
+            .unwrap_or_else(|| DEFAULT_TASK_CLASS.into());
+        validate_token("task_class", &task_class, TOKEN_MAX_LEN)?;
+        let prompt =
+            prompt_with_pr_metadata_instructions(input.prompt.trim(), &input.task_id);
+        Ok(Self {
+            task_id: input.task_id,
+            project: DEFAULT_PROJECT.into(),
+            harness: DEFAULT_HARNESS.into(),
+            sandbox_backend: DEFAULT_SANDBOX_BACKEND.into(),
+            sandbox_profile: DEFAULT_SANDBOX_PROFILE.into(),
+            task_class,
+            initial_prompt: prompt,
+            model_override: None,
+            reasoning_effort: None,
+            budget_usd: None,
+            dry_run: false,
+            resume_from_last: true,
+            parent_session_id: input.parent_session_id,
+        })
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ResumePickerInput {
+    task_id: String,
+    prompt: String,
+    /// Original picker session_id we're resuming. Optional today (the
+    /// coordinator supplies it when it has the picker.exited event in hand),
+    /// journaled on the resumed `picker.spawned` as `parent_session_id`.
+    #[serde(default)]
+    parent_session_id: Option<String>,
+    /// Optional task_class hint carried forward from the original spawn.
+    #[serde(default)]
+    task_class: Option<String>,
 }
 
 fn validate_harness(harness: &str, dry_run: bool) -> Result<(), SessionError> {
@@ -1409,6 +1532,10 @@ fn append_codex_args(command: &mut Command, spec: &SpawnSpec, worktree_path: &Pa
     command.arg("--ask-for-approval");
     command.arg("never");
     command.arg("exec");
+    if spec.resume_from_last {
+        command.arg("resume");
+        command.arg("--last");
+    }
     command.arg("--cd");
     command.arg(worktree_path);
     // local x default relies on the picker OS account as the boundary; Codex's
@@ -2323,6 +2450,8 @@ async fn publish_picker_spawned(
         sandbox_backend: handle.sandbox_backend.clone(),
         sandbox_profile: handle.sandbox_profile.clone(),
         task_class: handle.task_class.clone(),
+        codex_conversation_id: None,
+        parent_session_id: handle.parent_session_id.clone(),
     };
     let envelope = EventEnvelope::new(
         PickerSpawned::EVENT_TYPE,
@@ -5684,6 +5813,7 @@ github-mcp = { url = "https://api.githubcopilot.com/mcp/", enabled = true, auth 
                 resource_scope: None,
                 spawned_at,
                 dry_run: true,
+                parent_session_id: None,
             },
             status,
             exited_at: matches!(status, PickerStatus::Exited | PickerStatus::Killed)
@@ -5739,6 +5869,8 @@ github-mcp = { url = "https://api.githubcopilot.com/mcp/", enabled = true, auth 
             reasoning_effort: None,
             budget_usd: Some(1.0),
             dry_run,
+            resume_from_last: false,
+            parent_session_id: None,
         }
     }
 
@@ -5779,6 +5911,7 @@ github-mcp = { url = "https://api.githubcopilot.com/mcp/", enabled = true, auth 
             resource_scope: None,
             spawned_at: Utc::now(),
             dry_run,
+            parent_session_id: None,
         }
     }
 

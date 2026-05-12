@@ -67,12 +67,13 @@ Before any commit:
 - [ ] Tests added for new code (and regressions for bug fixes).
 - [ ] Journal logged: `plan`, `finding`s, any `decision`s, final `outcome`.
 
-Before opening a PR:
+Before exiting (the coordinator opens the PR — see "Opening the PR" below):
 - [ ] `cargo check --workspace` passes.
 - [ ] `cargo test --workspace` passes.
-- [ ] PR title uses conventional prefix.
-- [ ] PR body explains what changed and why.
-- [ ] PR is ready-for-review (not draft) unless asked otherwise.
+- [ ] At least one commit ahead of trunk on `task/<task-id>`.
+- [ ] Working tree is clean (no uncommitted changes outside `.jam/`).
+- [ ] `.jam/pr-title.txt` written — single line, conventional prefix, ≤240 chars.
+- [ ] `.jam/pr-body.md` written — Summary + Verification sections.
 
 ## What NOT to do
 
@@ -82,8 +83,21 @@ Before opening a PR:
 - Don't run git operations on the same worktree in parallel — concurrent commands cause `index.lock` contention. The orchestrator's worktree creation protocol prevents this between Pickers; within a Picker, serialize git calls.
 - Don't commit secrets. The orchestrator's journal writer redacts known secret patterns at write time, but commits are unfiltered. Keep `gitleaks` clean.
 
-## After commit
+## Opening the PR (handled by the orchestrator)
 
-Don't push immediately if you're going to keep working — the worktree's branch will accumulate commits as you iterate. When ready, push and open the PR via `gh pr create` (or the orchestrator's `open-pr` tool, which uses `octocrab`).
+**You do not push the branch. You do not run `gh pr create`. You do not call `open-pr` yourself.** The post-picker coordinator (`jam-task-lifecycle`) detects `picker.exited` with `exit_code=0`, runs pre-checks on your worktree, and calls `tool.repo.open-pr` itself. See `graph/decisions/dec-post-picker-coordination.md`.
 
-The PR creation flow auto-emits `pr.opened` to NATS, which propagates to `task-lifecycle-handler` and updates the Tempyr task node to `status: in-review`.
+Your contract as a Picker — *exactly* this, no more, no less:
+
+1. Make the code changes the task requires.
+2. Commit them on the task branch (`task/<task-id>`, already checked out). One commit is fine; multiple commits are fine.
+3. Write the PR title to `.jam/pr-title.txt` — a single line, conventional-commit format (`feat:`, `fix:`, `refactor:`, etc.). 240 chars max.
+4. Write the PR body to `.jam/pr-body.md` — Markdown, with **Summary** and **Verification** sections at minimum. Reference the issue/task by id where relevant.
+5. Leave the working tree clean. Uncommitted changes *outside* `.jam/` will cause the coordinator to reject the worktree and resume your session asking you to clean up.
+6. Exit normally (`exit_code=0`).
+
+If you exit non-zero, exit with uncommitted changes, exit with no commits ahead of trunk, or exit without `.jam/pr-title.txt`/`.jam/pr-body.md`, the coordinator emits `picker.continuation-needed` and your session is resumed with a prompt explaining what to fix. Treat that resume prompt as authoritative — don't second-guess; address the specific deficiency it names.
+
+When CodeRabbit comments or CI failures arrive on the opened PR, the same coordinator emits `picker.continuation-needed` with the comments / failure log and resumes your session. You'll see the new input as a fresh user prompt in the same conversation — read the original task description back in your context if you need to re-orient.
+
+Branches and pushes flow through the orchestrator's user-to-server GitHub token so PRs are attributed to a real user (`is_bot:false`) and reviewer bots auto-review. **Pushing manually breaks that attribution.**

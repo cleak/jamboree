@@ -42,6 +42,12 @@
     },
     "task_class": {
       "type": "string"
+    },
+    "codex_conversation_id": {
+      "type": "string"
+    },
+    "parent_session_id": {
+      "type": "string"
     }
   },
   "description": "Emitted by jam-svc-session after a Picker process is launched (\u00a724.3 step 10).",

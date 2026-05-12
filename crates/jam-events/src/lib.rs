@@ -161,7 +161,7 @@ mod tests {
         // codegen is producing the wrong shape.
         use crate::generated::PickerSpawned;
         assert_eq!(PickerSpawned::EVENT_TYPE, "picker.spawned");
-        assert_eq!(PickerSpawned::EVENT_SUBTYPE_VERSION, 1);
+        assert_eq!(PickerSpawned::EVENT_SUBTYPE_VERSION, 2);
     }
 
     #[test]

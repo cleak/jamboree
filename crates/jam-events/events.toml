@@ -26,7 +26,7 @@ schema_version = 1
 # ─── Picker lifecycle ──────────────────────────────────────────────────
 
 [events."picker.spawned"]
-version = 1
+version = 2
 description = "Emitted by jam-svc-session after a Picker process is launched (§24.3 step 10)."
 fields = [
     { name = "task_id",          type = "string",   required = true  },
@@ -40,6 +40,14 @@ fields = [
     { name = "sandbox_backend",  type = "string",   required = true  },
     { name = "sandbox_profile",  type = "string",   required = true  },
     { name = "task_class",       type = "string",   required = true  },
+    # v2: codex conversation UUID captured from the spawned rollout file.
+    # Optional because (a) older spawns don't have it, and (b) other harnesses
+    # may not expose a conversation id. Required for codex resume.
+    { name = "codex_conversation_id", type = "string", required = false },
+    # v2: when this spawn resumes an earlier session, parent_session_id points
+    # at the original `session_id`. Used by the coordinator to chain
+    # continuation attempts.
+    { name = "parent_session_id",     type = "string", required = false },
 ]
 
 [events."picker.first-output"]
@@ -103,6 +111,34 @@ fields = [
     { name = "stall_kind",    type = "string",   required = true },  # "token-idle" | "tool-loop" | "no-progress"
     { name = "stall_secs",    type = "u32",      required = true },
     { name = "detected_at",   type = "datetime", required = true },
+]
+
+[events."picker.continuation-needed"]
+version = 1
+description = "Post-picker coordinator determined the worktree is not ready to ship as-is (or a downstream signal like CodeRabbit / CI failure arrived). A continuation-spawner resumes the same picker session with the supplied prompt. See dec-post-picker-coordination."
+fields = [
+    { name = "task_id",       type = "string",   required = true  },
+    # Original picker session id (jam-svc-session ULID, e.g. codex-cli:01K...).
+    # The continuation spawner uses this to look up codex_conversation_id from
+    # the most recent picker.spawned event.
+    { name = "session_id",    type = "string",   required = true  },
+    { name = "worktree_path", type = "path",     required = true  },
+    # Why the continuation is needed:
+    #   "dirty-tree"           — commits ahead but uncommitted changes left over
+    #   "no-commits"           — picker exited 0 but produced no commits
+    #   "missing-pr-metadata"  — .jam/pr-title.txt or .jam/pr-body.md missing
+    #   "picker-failed"        — picker exited non-zero
+    #   "ci-failed"            — CI reported failure on the opened PR
+    #   "review-received"      — reviewer (e.g. CodeRabbit) left comments to address
+    { name = "reason",        type = "string",   required = true  },
+    { name = "detail",        type = "string",   required = true  },
+    # Prompt drafted by the coordinator for the resumed session. The
+    # continuation spawner passes this verbatim as `codex resume`'s prompt arg.
+    { name = "prompt",        type = "string",   required = true  },
+    # Number of continuations attempted for this task already (zero on first).
+    # Loop-guard for the coordinator: above a cap, escalate via notify-human.
+    { name = "attempt",       type = "u32",      required = true  },
+    { name = "requested_at",  type = "datetime", required = true  },
 ]
 
 

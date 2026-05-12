@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:picker.continuation-needed",
+  "title": "picker.continuation-needed",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "task_id": {
+      "type": "string"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "worktree_path": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "detail": {
+      "type": "string"
+    },
+    "prompt": {
+      "type": "string"
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "requested_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "Post-picker coordinator determined the worktree is not ready to ship as-is (or a downstream signal like CodeRabbit / CI failure arrived). A continuation-spawner resumes the same picker session with the supplied prompt. See dec-post-picker-coordination.",
+  "required": [
+    "task_id",
+    "session_id",
+    "worktree_path",
+    "reason",
+    "detail",
+    "prompt",
+    "attempt",
+    "requested_at"
+  ]
+}

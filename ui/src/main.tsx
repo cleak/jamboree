@@ -457,6 +457,17 @@ function App() {
     queueMicrotask(connect);
   });
 
+  const disconnect = () => {
+    streamSocket?.close();
+    streamSocket = undefined;
+    autoConnectedToken = "";
+    setConnectedToken("");
+    setEvents([]);
+    setStatus("disconnected");
+    setToken("");
+    localStorage.removeItem("jam.ui.token");
+  };
+
   const pickerRows = createMemo(() => pickerRowsFromEvents(events()));
   const traceRows = createMemo(() => traceRowsFromEvents(events()));
   const quotaRows = createMemo(() =>
@@ -475,6 +486,17 @@ function App() {
   );
 
   return (
+    <Show
+      when={connectedToken().length > 0}
+      fallback={
+        <TokenGate
+          token={token()}
+          status={status()}
+          onToken={setToken}
+          onConnect={connect}
+        />
+      }
+    >
     <main class="min-h-screen bg-[#f6f6f3] text-[#161815]">
       <header class="sticky top-0 z-10 border-b border-[#dddcd4] bg-white/95 backdrop-blur">
         <div class="mx-auto flex max-w-[1500px] items-center justify-between gap-4 px-4 py-3 sm:px-6">
@@ -515,12 +537,11 @@ function App() {
               )}
             </For>
           </nav>
-          <StreamControls
-            token={token()}
+          <AdvancedControls
             subject={subject()}
-            onToken={setToken}
             onSubject={setSubject}
-            onConnect={connect}
+            onReconnect={connect}
+            onDisconnect={disconnect}
           />
         </aside>
 
@@ -556,6 +577,7 @@ function App() {
         onClear={() => setNotifications([])}
       />
     </main>
+    </Show>
   );
 }
 
@@ -563,44 +585,103 @@ function ViewRouter(props: RouteData & { path: string }) {
   return routeView(props.path, props);
 }
 
-function StreamControls(props: {
+function TokenGate(props: {
   token: string;
-  subject: string;
+  status: string;
   onToken: (value: string) => void;
-  onSubject: (value: string) => void;
   onConnect: () => void;
 }) {
+  const errorMessage = () => {
+    const s = props.status;
+    if (s === "token required" || s === "disconnected" || s === "connecting" || s === "connected") {
+      return "";
+    }
+    return s.startsWith("backlog error") || s === "error" ? s : "";
+  };
+
   return (
-    <details
-      class="rounded-md border border-[#dddcd4] bg-white px-4 py-3"
-      open={props.token.trim().length === 0}
-    >
-      <summary class="cursor-pointer text-sm font-medium">Access</summary>
-      <div class="mt-3 grid gap-3 md:grid-cols-[1fr_220px_auto]">
-        <label class="grid gap-1 text-xs text-[#62665e]">
-          Token
+    <main class="flex min-h-screen items-center justify-center bg-[#f6f6f3] px-4 py-10 text-[#161815]">
+      <form
+        class="w-full max-w-md rounded-lg border border-[#dddcd4] bg-white p-6 shadow-sm"
+        onSubmit={(event) => {
+          event.preventDefault();
+          props.onConnect();
+        }}
+      >
+        <h1 class="text-xl font-semibold">Jamboree</h1>
+        <p class="mt-1 text-sm text-[#62665e]">
+          Enter a session token to connect. Issue one with{" "}
+          <code class="rounded bg-[#f0f0ea] px-1 py-0.5 text-xs">jam ui token</code> from the host shell.
+        </p>
+
+        <label class="mt-5 block text-sm font-medium">
+          Session token
           <input
-            class="min-w-0 rounded-md border border-[#d3d2ca] px-3 py-2 text-sm text-[#161815]"
+            class="mt-1 block w-full rounded-md border border-[#d3d2ca] px-3 py-2 text-sm text-[#161815] focus:border-[#284b35] focus:outline-none"
             type="password"
+            autocomplete="off"
+            spellcheck={false}
+            autofocus
             value={props.token}
             onInput={(event) => props.onToken(event.currentTarget.value)}
           />
         </label>
+
+        {errorMessage() && (
+          <p class="mt-3 text-sm text-[#9a2b1f]">{errorMessage()}</p>
+        )}
+
+        <button
+          class="mt-5 w-full rounded-md bg-[#284b35] px-4 py-2 text-sm font-medium text-white hover:bg-[#203d2b] disabled:cursor-not-allowed disabled:bg-[#9da89e]"
+          type="submit"
+          disabled={props.token.trim().length === 0}
+        >
+          Connect
+        </button>
+      </form>
+    </main>
+  );
+}
+
+function AdvancedControls(props: {
+  subject: string;
+  onSubject: (value: string) => void;
+  onReconnect: () => void;
+  onDisconnect: () => void;
+}) {
+  return (
+    <details class="rounded-md border border-[#dddcd4] bg-white px-4 py-3">
+      <summary class="cursor-pointer text-sm font-medium">Advanced</summary>
+      <div class="mt-3 grid gap-3">
         <label class="grid gap-1 text-xs text-[#62665e]">
-          Subject
+          NATS subject filter
           <input
-            class="min-w-0 rounded-md border border-[#d3d2ca] px-3 py-2 text-sm text-[#161815]"
+            class="w-full rounded-md border border-[#d3d2ca] px-3 py-2 text-sm text-[#161815]"
             value={props.subject}
             onInput={(event) => props.onSubject(event.currentTarget.value)}
+            placeholder="journal.>"
           />
+          <span class="text-[11px] text-[#878a82]">
+            Default <code class="rounded bg-[#f0f0ea] px-1">journal.&gt;</code> shows everything. Narrow to e.g.{" "}
+            <code class="rounded bg-[#f0f0ea] px-1">journal.pr.&gt;</code> for PR events only.
+          </span>
         </label>
-        <button
-          class="self-end rounded-md bg-[#284b35] px-4 py-2 text-sm text-white hover:bg-[#203d2b]"
-          type="button"
-          onClick={props.onConnect}
-        >
-          Reconnect
-        </button>
+        <div class="flex gap-2">
+          <button
+            class="flex-1 rounded-md bg-[#284b35] px-4 py-2 text-sm text-white hover:bg-[#203d2b]"
+            type="button"
+            onClick={props.onReconnect}
+          >
+            Reconnect
+          </button>
+          <button
+            class="rounded-md border border-[#d3d2ca] px-4 py-2 text-sm hover:bg-[#f0f0ea]"
+            type="button"
+            onClick={props.onDisconnect}
+          >
+            Disconnect
+          </button>
+        </div>
       </div>
     </details>
   );

@@ -703,6 +703,31 @@ async fn open_pr(
         git_push(&state.config, worktree, &input.branch).await?;
     }
 
+    // Idempotency: if a PR is already open for this branch, the push above
+    // updated it. Return the existing PR without trying to create a second.
+    // This is the post-picker coordinator's feedback-continuation path —
+    // additional commits flow into the existing PR on a resumed Picker
+    // session. See graph/decisions/dec-post-picker-coordination.md.
+    if let Some(existing) = gh_pr_lookup_by_branch(&state.config, &repo, &input.branch).await? {
+        info!(
+            pr_ref = %existing.pr_ref,
+            branch = %input.branch,
+            "open-pr is idempotent on existing PR; returning current pr_ref",
+        );
+        let opened_at = Utc::now();
+        return Ok(OpenPrOutput {
+            task_id: input.task_id,
+            pr_ref: existing.pr_ref,
+            url: existing.url,
+            branch: input.branch,
+            title: input.title,
+            draft: existing.is_draft,
+            state: existing.state,
+            opened_at,
+            trace_id: ctx.trace_id.to_string(),
+        });
+    }
+
     let (url, token_kind) = gh_pr_create(
         &state.config,
         &repo,
@@ -1343,6 +1368,72 @@ fn review_decision_allows_merge(decision: &str) -> bool {
         decision.to_ascii_uppercase().as_str(),
         "CHANGES_REQUESTED" | "REVIEW_REQUIRED"
     )
+}
+
+/// Existing PR found for a head branch. Returned by
+/// [`gh_pr_lookup_by_branch`] so [`open_pr`] can short-circuit and stay
+/// idempotent on the feedback-continuation path.
+struct ExistingPr {
+    pr_ref: String,
+    url: String,
+    state: String,
+    is_draft: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct GhPrListEntry {
+    number: u64,
+    url: String,
+    #[serde(default)]
+    state: Option<String>,
+    #[serde(default, rename = "isDraft")]
+    is_draft: Option<bool>,
+}
+
+/// Look up an existing open PR on `branch` in `repo`. Returns `Ok(None)`
+/// when no PR is open for that branch. The post-picker coordinator calls
+/// `open-pr` whether or not a PR exists; on the second invocation
+/// (feedback continuation that pushed new commits to an existing PR
+/// branch) this lookup steers `open_pr` away from `gh pr create`.
+async fn gh_pr_lookup_by_branch(
+    config: &RepoConfig,
+    repo: &str,
+    branch: &str,
+) -> Result<Option<ExistingPr>, RepoError> {
+    let mut command = Command::new(&config.gh_bin);
+    command.arg("pr");
+    command.arg("list");
+    command.arg("--repo");
+    command.arg(repo);
+    command.arg("--head");
+    command.arg(branch);
+    command.arg("--state");
+    command.arg("open");
+    command.arg("--limit");
+    command.arg("1");
+    command.arg("--json");
+    command.arg("number,url,state,isDraft");
+    if let Some((token, _)) = resolve_write_token(config).await? {
+        command.env("GH_TOKEN", token.expose_secret());
+    }
+    let output = run_command(command, config.timeout, "gh-pr-list").await?;
+    let entries: Vec<GhPrListEntry> = serde_json::from_slice(&output.stdout).map_err(|err| {
+        RepoError::protocol(
+            "gh-output-invalid",
+            format!("gh pr list returned invalid JSON: {err}"),
+            "Upgrade gh or update jam-svc-repo's parser.",
+            "comp-jam-svc-repo",
+        )
+    })?;
+    let Some(first) = entries.into_iter().next() else {
+        return Ok(None);
+    };
+    Ok(Some(ExistingPr {
+        pr_ref: format!("{repo}#{}", first.number),
+        url: first.url,
+        state: first.state.unwrap_or_else(|| "open".into()),
+        is_draft: first.is_draft.unwrap_or(false),
+    }))
 }
 
 async fn gh_pr_create(
@@ -2704,6 +2795,60 @@ exit 1
         let fixture = GhFixture::new();
         let config = fixture.config();
         assert!(resolve_write_token(&config).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn gh_pr_lookup_by_branch_returns_existing_pr() {
+        let fixture = GhFixture::new();
+        fixture.write_script(
+            r#"#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1 $2" == "pr list" ]]; then
+  printf '[{"number":404,"url":"https://github.com/cleak/blueberry/pull/404","state":"OPEN","isDraft":false}]\n'
+  exit 0
+fi
+printf 'unexpected args: %s\n' "$*" >&2
+exit 1
+"#,
+        );
+
+        let existing = gh_pr_lookup_by_branch(
+            &fixture.config(),
+            "cleak/blueberry",
+            "task/some-branch",
+        )
+        .await
+        .unwrap()
+        .expect("expected lookup to find an existing PR");
+        assert_eq!(existing.pr_ref, "cleak/blueberry#404");
+        assert_eq!(existing.url, "https://github.com/cleak/blueberry/pull/404");
+        assert_eq!(existing.state, "OPEN");
+        assert!(!existing.is_draft);
+    }
+
+    #[tokio::test]
+    async fn gh_pr_lookup_by_branch_returns_none_for_empty_list() {
+        let fixture = GhFixture::new();
+        fixture.write_script(
+            r#"#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1 $2" == "pr list" ]]; then
+  printf '[]\n'
+  exit 0
+fi
+printf 'unexpected args: %s\n' "$*" >&2
+exit 1
+"#,
+        );
+
+        let result = gh_pr_lookup_by_branch(
+            &fixture.config(),
+            "cleak/blueberry",
+            "task/no-such-branch",
+        )
+        .await
+        .unwrap();
+        assert!(result.is_none());
     }
 
     #[tokio::test]

@@ -20,12 +20,32 @@ use tracing::{debug, info, warn};
 
 use crate::JournalEnvelope;
 
-const OPEN_PR_SUBJECT: &str = "tool.repo.open-pr";
-const RESUME_PICKER_SUBJECT: &str = "tool.session.resume-picker";
+const REPO_SERVICE: &str = "repo";
+const SESSION_SERVICE: &str = "session";
+const OPEN_PR_METHOD: &str = "open-pr";
+const RESUME_PICKER_METHOD: &str = "resume-picker";
 const CONTINUATION_SUBJECT: &str = "journal.picker.continuation-needed";
 const OPEN_PR_TIMEOUT: Duration = Duration::from_secs(60);
 const RESUME_PICKER_TIMEOUT: Duration = Duration::from_secs(30);
 const CONTINUATION_ATTEMPT_CAP: u32 = 3;
+
+/// Resolve a tool subject through the routing manifest.
+///
+/// After patch-agent performs an atomic swap, the unversioned listener
+/// drains and only the versioned candidate responds. Callers must
+/// consult the `routing-manifest` KV bucket to find the active subject
+/// prefix. Falls back to `tool.<service>.<method>` when the manifest is
+/// not yet populated (fresh substrate, no patches applied), so the
+/// pre-patch path keeps working.
+async fn resolve_tool_subject(nats: &JamNats, service: &str, method: &str) -> String {
+    match jam_nats::load_current_routing_manifest(nats.jetstream()).await {
+        Ok(Some(entry)) => entry
+            .manifest
+            .subject_for(service, method)
+            .unwrap_or_else(|| format!("tool.{service}.{method}")),
+        _ => format!("tool.{service}.{method}"),
+    }
+}
 const PICKER_USER_ENV: &str = "JAM_PICKER_USER";
 const DEFAULT_PICKER_USER: &str = "picker";
 const DEFAULT_BASE_ENV: &str = "JAM_TRUNK_BRANCH";
@@ -250,8 +270,9 @@ pub async fn handle_continuation_needed(
         attempt = attempt,
         "dispatching resume-picker",
     );
+    let subject = resolve_tool_subject(nats, SESSION_SERVICE, RESUME_PICKER_METHOD).await;
     let response: Result<ResumePickerResponse, _> = nats
-        .request_traced(RESUME_PICKER_SUBJECT, &request, ctx, RESUME_PICKER_TIMEOUT)
+        .request_traced(subject, &request, ctx, RESUME_PICKER_TIMEOUT)
         .await;
     match response {
         Ok(resp) if resp.error.is_none() => {
@@ -464,8 +485,9 @@ async fn request_open_pr(
         worktree_path: &event.worktree_path.to_string_lossy(),
         push: true,
     };
+    let subject = resolve_tool_subject(nats, REPO_SERVICE, OPEN_PR_METHOD).await;
     let response: OpenPrResponse = nats
-        .request_traced(OPEN_PR_SUBJECT, &payload, ctx, OPEN_PR_TIMEOUT)
+        .request_traced(subject, &payload, ctx, OPEN_PR_TIMEOUT)
         .await
         .map_err(|err| format!("nats request: {err}"))?;
     if let Some(error) = response.error {

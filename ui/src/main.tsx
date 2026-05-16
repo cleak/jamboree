@@ -54,6 +54,13 @@ type SessionOutputRecord = {
   truncated: boolean;
 };
 
+type ParsedLogLine = {
+  kind: "assistant" | "user" | "tool" | "status" | "error" | "text";
+  title: string;
+  body: string;
+  meta: string[];
+};
+
 type TraceRow = {
   traceId: string;
   events: number;
@@ -87,6 +94,8 @@ type TraceReplayState =
   | { status: "error"; traceId: string; error: string };
 
 type MessageMode = "queue" | "interrupt" | "full-stop";
+type TaskTarget = "blueberry" | "jamboree";
+type ThemeMode = "light" | "dark";
 
 type MessageResponse = {
   message_id: string;
@@ -241,6 +250,7 @@ const navItems = [
 
 function App() {
   const [token, setToken] = createSignal(localStorage.getItem("jam.ui.token") ?? "");
+  const [theme, setTheme] = createSignal<ThemeMode>(loadTheme());
   const [connectedToken, setConnectedToken] = createSignal("");
   const [subject, setSubject] = createSignal("journal.>");
   const [status, setStatus] = createSignal("disconnected");
@@ -266,6 +276,10 @@ function App() {
     if (next.length > 0) {
       localStorage.setItem("jam.ui.token", next);
     }
+  });
+
+  createEffect(() => {
+    localStorage.setItem("jam.ui.theme", theme());
   });
 
   createEffect(() => {
@@ -497,38 +511,26 @@ function App() {
         />
       }
     >
-    <main class="min-h-screen bg-[#f6f6f3] text-[#161815]">
-      <header class="sticky top-0 z-10 border-b border-[#dddcd4] bg-white/95 backdrop-blur">
-        <div class="mx-auto flex max-w-[1500px] items-center justify-between gap-4 px-4 py-3 sm:px-6">
-          <div>
-            <h1 class="text-xl font-semibold tracking-normal">Jamboree</h1>
-            <p class="text-sm text-[#62665e]">Blueberry orchestration</p>
-          </div>
-          <div class="flex items-center gap-2">
+    <main class={`min-h-screen bg-[#f7f7f8] text-[#171717] theme-${theme()}`} data-theme={theme()}>
+      <div class="grid min-h-screen grid-cols-1 lg:grid-cols-[240px_minmax(0,1fr)]">
+        <aside class="min-w-0 border-b border-[#e5e5e5] bg-[#f4f4f5] px-3 py-3 lg:border-b-0 lg:border-r">
+          <div class="mb-4 flex items-center justify-between gap-3 px-2">
+            <a class="text-base font-semibold tracking-normal" href="/">Jamboree</a>
             <button
-              class="rounded-md border border-[#d3d2ca] px-3 py-2 text-sm hover:bg-[#f0f0ea]"
+              class="rounded-md border border-[#d7d7d7] bg-white px-2.5 py-1.5 text-xs hover:bg-[#eeeeef]"
               type="button"
               onClick={() => setDrawerOpen(true)}
             >
               Alerts {unreadCount()}
             </button>
-            <div class="rounded-md border border-[#d3d2ca] px-3 py-2 text-sm">
-              <span class="mr-2 inline-block h-2 w-2 rounded-full bg-[#1f8f53]" />
-              {status()}
-            </div>
           </div>
-        </div>
-      </header>
-
-      <div class="mx-auto grid max-w-[1500px] grid-cols-1 gap-5 px-4 py-5 sm:px-6 lg:grid-cols-[240px_1fr]">
-        <aside class="min-w-0 space-y-4">
-          <nav class="flex gap-2 overflow-x-auto border-b border-[#dddcd4] pb-3 lg:block lg:border-b-0 lg:pb-0">
+          <nav class="flex gap-1 overflow-x-auto pb-3 lg:block lg:space-y-1 lg:overflow-visible lg:pb-0">
             <For each={navItems}>
               {(item) => (
                 <a
-                  class="flex items-center justify-between rounded-md px-3 py-2 text-sm text-[#3f443c] hover:bg-[#ecece5]"
+                  class="flex items-center justify-between rounded-md px-3 py-2 text-sm text-[#444444] hover:bg-[#e9e9ea]"
                   classList={{
-                    "bg-[#e4e8df] font-medium text-[#161815]": currentPath() === item.href
+                    "bg-white font-medium text-[#171717] shadow-sm": currentPath() === item.href
                   }}
                   href={item.href}
                 >
@@ -537,36 +539,68 @@ function App() {
               )}
             </For>
           </nav>
-          <AdvancedControls
-            subject={subject()}
-            onSubject={setSubject}
-            onReconnect={connect}
-            onDisconnect={disconnect}
-          />
+          <div class="mt-4 space-y-3">
+            <ConnectionControls
+              token={token()}
+              status={status()}
+              onToken={setToken}
+              onReconnect={connect}
+              onClear={disconnect}
+            />
+            <AdvancedControls
+              subject={subject()}
+              onSubject={setSubject}
+              onApply={connect}
+            />
+          </div>
         </aside>
 
-        <section class="min-w-0 space-y-5">
-          <ViewRouter
-            path={currentPath()}
-            status={status()}
-            subject={subject()}
-            lastConnectedAt={lastConnectedAt()}
-            events={events()}
-            notifications={notifications()}
-            services={services()}
-            taskRows={taskRows()}
-            pickerRows={pickerRows()}
-            prRows={prRows()}
-            traceRows={traceRows()}
-            quotaRows={quotaRows()}
-            quotaError={quotaError()}
-            quotaRefreshedAt={quotaRefreshedAt()}
-            maestroEvents={maestroEvents()}
-            traceReplay={traceReplay()}
-            token={token()}
-            createTaskState={createTaskState()}
-            onCreateTaskState={setCreateTaskState}
-          />
+        <section class="min-w-0">
+          <header class="sticky top-0 z-10 border-b border-[#e5e5e5] bg-[#f7f7f8]/95 px-4 py-3 backdrop-blur sm:px-6">
+            <div class="mx-auto flex max-w-[1680px] items-center justify-between gap-4">
+              <div>
+                <h1 class="text-lg font-semibold">Orchestrator</h1>
+                <p class="text-sm text-[#666666]">Blueberry and Jamboree work queues</p>
+              </div>
+              <div class="flex items-center gap-2">
+                <button
+                  class="rounded-full border border-[#d7d7d7] bg-white px-3 py-1.5 text-sm hover:bg-[#eeeeef]"
+                  type="button"
+                  onClick={() => setTheme(theme() === "dark" ? "light" : "dark")}
+                  title="Toggle dark mode"
+                >
+                  {theme() === "dark" ? "Light" : "Dark"}
+                </button>
+                <div class="rounded-full border border-[#d7d7d7] bg-white px-3 py-1.5 text-sm">
+                  <span class="mr-2 inline-block h-2 w-2 rounded-full bg-[#19a463]" />
+                  {status()}
+                </div>
+              </div>
+            </div>
+          </header>
+          <div class="mx-auto max-w-[1680px] px-4 py-5 sm:px-6">
+            <ViewRouter
+              path={currentPath()}
+              status={status()}
+              subject={subject()}
+              lastConnectedAt={lastConnectedAt()}
+              events={events()}
+              notifications={notifications()}
+              services={services()}
+              taskRows={taskRows()}
+              pickerRows={pickerRows()}
+              prRows={prRows()}
+              traceRows={traceRows()}
+              quotaRows={quotaRows()}
+              quotaError={quotaError()}
+              quotaRefreshedAt={quotaRefreshedAt()}
+              maestroEvents={maestroEvents()}
+              traceReplay={traceReplay()}
+              token={token()}
+              createTaskState={createTaskState()}
+              onCreateTaskState={setCreateTaskState}
+            />
+          </div>
         </section>
       </div>
 
@@ -643,45 +677,89 @@ function TokenGate(props: {
   );
 }
 
+function ConnectionControls(props: {
+  token: string;
+  status: string;
+  onToken: (value: string) => void;
+  onReconnect: () => void;
+  onClear: () => void;
+}) {
+  const errorMessage = () => {
+    const s = props.status;
+    return s.startsWith("backlog error") || s === "error" ? s : "";
+  };
+
+  return (
+    <section class="rounded-md border border-[#dddcd4] bg-white px-4 py-3">
+      <div class="text-sm font-medium">Connection</div>
+      <label class="mt-3 grid gap-1 text-xs text-[#62665e]">
+        Session token
+        <input
+          class="w-full rounded-md border border-[#d3d2ca] px-3 py-2 text-sm text-[#161815]"
+          type="password"
+          name="jam-session-token"
+          autocomplete="off"
+          spellcheck={false}
+          value={props.token}
+          onInput={(event) => props.onToken(event.currentTarget.value)}
+          placeholder="Paste jam ui token"
+        />
+      </label>
+      <Show when={errorMessage().length > 0}>
+        <div class="mt-2 break-words text-xs leading-5 text-[#9a2b1f]">{errorMessage()}</div>
+      </Show>
+      <div class="mt-3 flex gap-2">
+        <button
+          class="flex-1 rounded-md bg-[#284b35] px-3 py-2 text-sm text-white hover:bg-[#203d2b] disabled:cursor-not-allowed disabled:bg-[#9da89e]"
+          type="button"
+          disabled={props.token.trim().length === 0}
+          onClick={props.onReconnect}
+        >
+          Reconnect
+        </button>
+        <button
+          class="rounded-md border border-[#d3d2ca] px-3 py-2 text-sm hover:bg-[#f0f0ea]"
+          type="button"
+          onClick={props.onClear}
+        >
+          Clear
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function AdvancedControls(props: {
   subject: string;
   onSubject: (value: string) => void;
-  onReconnect: () => void;
-  onDisconnect: () => void;
+  onApply: () => void;
 }) {
   return (
     <details class="rounded-md border border-[#dddcd4] bg-white px-4 py-3">
-      <summary class="cursor-pointer text-sm font-medium">Advanced</summary>
+      <summary class="cursor-pointer text-sm font-medium">Event Filter</summary>
       <div class="mt-3 grid gap-3">
         <label class="grid gap-1 text-xs text-[#62665e]">
-          NATS subject filter
+          Live event subject
           <input
             class="w-full rounded-md border border-[#d3d2ca] px-3 py-2 text-sm text-[#161815]"
+            name="jam-subject-filter"
+            autocomplete="off"
+            spellcheck={false}
             value={props.subject}
             onInput={(event) => props.onSubject(event.currentTarget.value)}
             placeholder="journal.>"
           />
           <span class="text-[11px] text-[#878a82]">
-            Default <code class="rounded bg-[#f0f0ea] px-1">journal.&gt;</code> shows everything. Narrow to e.g.{" "}
-            <code class="rounded bg-[#f0f0ea] px-1">journal.pr.&gt;</code> for PR events only.
+            Advanced NATS filter. Default <code class="rounded bg-[#f0f0ea] px-1">journal.&gt;</code> shows all journal events.
           </span>
         </label>
-        <div class="flex gap-2">
-          <button
-            class="flex-1 rounded-md bg-[#284b35] px-4 py-2 text-sm text-white hover:bg-[#203d2b]"
-            type="button"
-            onClick={props.onReconnect}
-          >
-            Reconnect
-          </button>
-          <button
-            class="rounded-md border border-[#d3d2ca] px-4 py-2 text-sm hover:bg-[#f0f0ea]"
-            type="button"
-            onClick={props.onDisconnect}
-          >
-            Disconnect
-          </button>
-        </div>
+        <button
+          class="rounded-md border border-[#d3d2ca] px-3 py-2 text-sm hover:bg-[#f0f0ea]"
+          type="button"
+          onClick={props.onApply}
+        >
+          Apply filter
+        </button>
       </div>
     </details>
   );
@@ -808,9 +886,19 @@ function TaskComposer(props: {
   onState: (state: CreateTaskState) => void;
 }) {
   const [description, setDescription] = createSignal("");
-  const [project, setProject] = createSignal("blueberry");
+  const [target, setTarget] = createSignal<TaskTarget>("blueberry");
   const [taskClass, setTaskClass] = createSignal("light-edit");
   const [priority, setPriority] = createSignal("normal");
+  const taskClassOptions = createMemo(() =>
+    target() === "jamboree"
+      ? ["jamboree-self-modification", "investigation", "medium-edit", "doc-generation"]
+      : ["light-edit", "medium-edit", "investigation", "compile-heavy-rust", "ecs-refactor"]
+  );
+
+  const chooseTarget = (next: TaskTarget) => {
+    setTarget(next);
+    setTaskClass(next === "jamboree" ? "jamboree-self-modification" : "light-edit");
+  };
 
   const submit = async () => {
     const body = description().trim();
@@ -829,7 +917,7 @@ function TaskComposer(props: {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           description: body,
-          project: project(),
+          project: target(),
           task_class: taskClass(),
           priority: priority()
         })
@@ -852,39 +940,53 @@ function TaskComposer(props: {
   return (
     <Panel title="New Task">
       <div class="grid gap-4 p-4">
+        <div class="grid gap-2">
+          <div class="text-xs font-medium text-[#666666]">Target</div>
+          <div class="grid gap-2 sm:grid-cols-2">
+            <TaskTargetRadio
+              checked={target() === "blueberry"}
+              label="Blueberry"
+              detail="Game code and Tempyr task work"
+              onSelect={() => chooseTarget("blueberry")}
+            />
+            <TaskTargetRadio
+              checked={target() === "jamboree"}
+              label="Jamboree"
+              detail="Self-modify the orchestrator"
+              onSelect={() => chooseTarget("jamboree")}
+            />
+          </div>
+        </div>
         <label class="grid gap-1 text-xs text-[#62665e]">
           Task
           <textarea
-            class="min-h-28 w-full resize-y rounded-md border border-[#d3d2ca] px-3 py-2 text-sm text-[#161815] outline-none focus:border-[#516a98]"
+            class="min-h-32 w-full resize-y rounded-xl border border-[#d7d7d7] bg-white px-4 py-3 text-sm leading-6 text-[#171717] outline-none focus:border-[#9b9b9b] focus:ring-2 focus:ring-[#e8e8e8]"
             value={description()}
             onInput={(event) => setDescription(event.currentTarget.value)}
+            placeholder={
+              target() === "jamboree"
+                ? "Change the orchestrator, UI, services, docs, deploy flow, or integrations..."
+                : "Describe the Blueberry change or investigation..."
+            }
           />
         </label>
-        <div class="grid gap-3 sm:grid-cols-3">
-          <label class="grid gap-1 text-xs text-[#62665e]">
-            Project
-            <input
-              class="min-w-0 rounded-md border border-[#d3d2ca] px-3 py-2 text-sm text-[#161815] outline-none focus:border-[#516a98]"
-              value={project()}
-              onInput={(event) => setProject(event.currentTarget.value)}
-            />
-          </label>
+        <div class="grid gap-3 sm:grid-cols-2">
           <label class="grid gap-1 text-xs text-[#62665e]">
             Class
             <select
-              class="min-w-0 rounded-md border border-[#d3d2ca] px-3 py-2 text-sm text-[#161815] outline-none focus:border-[#516a98]"
+              class="min-w-0 rounded-md border border-[#d7d7d7] bg-white px-3 py-2 text-sm text-[#171717] outline-none focus:border-[#9b9b9b]"
               value={taskClass()}
               onChange={(event) => setTaskClass(event.currentTarget.value)}
             >
-              <option value="light-edit">light-edit</option>
-              <option value="medium-edit">medium-edit</option>
-              <option value="investigation">investigation</option>
+              <For each={taskClassOptions()}>
+                {(option) => <option value={option}>{option}</option>}
+              </For>
             </select>
           </label>
           <label class="grid gap-1 text-xs text-[#62665e]">
             Priority
             <select
-              class="min-w-0 rounded-md border border-[#d3d2ca] px-3 py-2 text-sm text-[#161815] outline-none focus:border-[#516a98]"
+              class="min-w-0 rounded-md border border-[#d7d7d7] bg-white px-3 py-2 text-sm text-[#171717] outline-none focus:border-[#9b9b9b]"
               value={priority()}
               onChange={(event) => setPriority(event.currentTarget.value)}
             >
@@ -897,7 +999,7 @@ function TaskComposer(props: {
         <div class="flex flex-wrap items-center justify-between gap-3">
           <CreateTaskFeedback state={props.state} />
           <button
-            class="rounded-md bg-[#284b35] px-4 py-2 text-sm font-medium text-white hover:bg-[#203d2b] disabled:cursor-not-allowed disabled:bg-[#9ca39a]"
+            class="rounded-full bg-[#171717] px-5 py-2 text-sm font-medium text-white hover:bg-[#333333] disabled:cursor-not-allowed disabled:bg-[#a3a3a3]"
             type="button"
             disabled={props.state.status === "submitting"}
             onClick={submit}
@@ -907,6 +1009,35 @@ function TaskComposer(props: {
         </div>
       </div>
     </Panel>
+  );
+}
+
+function TaskTargetRadio(props: {
+  checked: boolean;
+  label: string;
+  detail: string;
+  onSelect: () => void;
+}) {
+  return (
+    <label
+      class="grid cursor-pointer grid-cols-[auto_minmax(0,1fr)] gap-3 rounded-lg border bg-white p-3 text-sm"
+      classList={{
+        "border-[#171717] shadow-sm": props.checked,
+        "border-[#d7d7d7] hover:border-[#b8b8b8]": !props.checked
+      }}
+    >
+      <input
+        class="mt-1 h-4 w-4 accent-[#171717]"
+        type="radio"
+        name="task-target"
+        checked={props.checked}
+        onChange={props.onSelect}
+      />
+      <span class="min-w-0">
+        <span class="block font-medium text-[#171717]">{props.label}</span>
+        <span class="mt-0.5 block text-xs text-[#666666]">{props.detail}</span>
+      </span>
+    </label>
   );
 }
 
@@ -1100,7 +1231,19 @@ function TaskDetailView(props: {
         </Panel>
         <div class="min-w-0 space-y-5">
           <Panel title="Run Log">
-            <RunLogPanel token={props.token} sessionId={currentSessionId()} />
+            <RunLogPanel
+              token={props.token}
+              taskId={task()?.taskId ?? props.taskId}
+              project={usefulField(task()?.project ?? "", "blueberry")}
+              harness={usefulField(
+                task()?.harness ?? "",
+                taskPickers()[0]?.harness ?? "codex-cli"
+              )}
+              taskClass={usefulField(task()?.taskClass ?? "", "light-edit")}
+              taskStatus={task()?.status ?? "unknown"}
+              pickerStatus={taskPickers()[0]?.status}
+              sessionId={currentSessionId()}
+            />
           </Panel>
           <Panel title="Pickers">
             <PickerMiniList rows={taskPickers()} />
@@ -1142,9 +1285,24 @@ function TaskTimeline(props: { items: TimelineItem[] }) {
   );
 }
 
-function RunLogPanel(props: { token: string; sessionId: string }) {
+function RunLogPanel(props: {
+  token: string;
+  taskId: string;
+  project: string;
+  harness: string;
+  taskClass: string;
+  taskStatus: string;
+  pickerStatus?: string;
+  sessionId: string;
+}) {
   const [records, setRecords] = createSignal<SessionOutputRecord[]>([]);
   const [status, setStatus] = createSignal("waiting for session");
+  const [prompt, setPrompt] = createSignal("");
+  const [mode, setMode] = createSignal<MessageMode>("queue");
+  const [sendError, setSendError] = createSignal("");
+  const [outbox, setOutbox] = createSignal<MessageOutboxItem[]>([]);
+  const resumePreferred = createMemo(() => shouldResumePicker(props.taskStatus, props.pickerStatus));
+  let logViewport: HTMLDivElement | undefined;
 
   createEffect(() => {
     const sessionId = props.sessionId;
@@ -1210,44 +1368,326 @@ function RunLogPanel(props: { token: string; sessionId: string }) {
     });
   });
 
+  createEffect(() => {
+    const sessionId = props.sessionId;
+    const token = props.token.trim();
+    if (!sessionId || sessionId === "-" || !token) {
+      return;
+    }
+
+    const socket = new WebSocket(wsUrl(token, `picker.${sessionId}.msg.status`));
+    socket.addEventListener("message", (message) => {
+      const parsed = parseBusEvent(message.data);
+      const messageId = stringField(parsed.envelope, "message_id");
+      const nextStatus = stringField(parsed.envelope, "status");
+      if (!messageId || !nextStatus) {
+        return;
+      }
+      setOutbox((items) => upsertOutboxStatus(items, messageId, nextStatus, parsed));
+    });
+    onCleanup(() => socket.close());
+  });
+
+  createEffect(() => {
+    const timer = window.setInterval(() => {
+      const now = Date.now();
+      setOutbox((items) =>
+        items.map((item) =>
+          isPendingDeliveryStatus(item.status) && now - item.updatedAt.getTime() > 10000
+            ? {
+                ...item,
+                status: "delivery-failed",
+                detail:
+                  "No delivery confirmation arrived. The Picker session may have already exited.",
+                updatedAt: new Date()
+              }
+            : item
+        )
+      );
+    }, 1000);
+    onCleanup(() => window.clearInterval(timer));
+  });
+
+  createEffect(() => {
+    records().length;
+    outbox().length;
+    queueMicrotask(() => {
+      if (logViewport) {
+        logViewport.scrollTop = logViewport.scrollHeight;
+      }
+    });
+  });
+
+  const sendPrompt = async () => {
+    const bodyText = prompt().trim();
+    const token = props.token.trim();
+    const sessionId = props.sessionId.trim();
+    setSendError("");
+    if (!token) {
+      setSendError("token required");
+      return;
+    }
+    if (!sessionId || sessionId === "-") {
+      setSendError("session required");
+      return;
+    }
+    if (!bodyText) {
+      setSendError("message required");
+      return;
+    }
+
+    const pendingId = `pending-${Date.now()}`;
+    const pending: MessageOutboxItem = {
+      messageId: pendingId,
+      sessionId,
+      mode: resumePreferred() ? "queue" : mode(),
+      status: resumePreferred() ? "resuming" : "sending",
+      text: bodyText,
+      detail: "",
+      updatedAt: new Date()
+    };
+    setOutbox((items) => [...items, pending].slice(-12));
+    setPrompt("");
+
+    try {
+      const response = await fetch(
+        resumePreferred()
+          ? taskResumeUrl(token, props.taskId)
+          : sessionMessageUrl(token, sessionId),
+        {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: resumePreferred()
+          ? JSON.stringify({
+              prompt: bodyText,
+              project: props.project,
+              harness: props.harness,
+              parent_session_id: sessionId,
+              task_class: props.taskClass
+            })
+          : JSON.stringify({ mode: mode(), text: bodyText })
+        }
+      );
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      const rendered = (await response.json()) as unknown;
+      if (resumePreferred()) {
+        const resumed = recordFromUnknown(rendered);
+        setOutbox((items) =>
+          items.map((item) =>
+            item.messageId === pendingId
+              ? {
+                  ...item,
+                  messageId: stringField(resumed, "session_id") ?? pendingId,
+                  sessionId: stringField(resumed, "session_id") ?? sessionId,
+                  status: "running",
+                  detail: "Started a resumed Picker for this task.",
+                  updatedAt: new Date()
+                }
+              : item
+          )
+        );
+      } else {
+        setOutbox((items) =>
+          reconcilePromptAck(items, pendingId, rendered as MessageResponse, bodyText)
+        );
+      }
+    } catch (caught: unknown) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      setSendError(message);
+      setOutbox((items) =>
+        items.map((item) =>
+          item.messageId === pendingId
+            ? { ...item, status: "delivery-failed", detail: message, updatedAt: new Date() }
+            : item
+        )
+      );
+    }
+  };
+
   return (
-    <div>
+    <div class="grid min-h-[620px] grid-rows-[auto_minmax(0,1fr)_auto]">
       <div class="flex flex-wrap items-center justify-between gap-2 border-b border-[#ecebe3] px-4 py-3 text-xs text-[#62665e]">
         <span class="min-w-0 truncate">{props.sessionId && props.sessionId !== "-" ? props.sessionId : "No picker session"}</span>
         <StatusPill status={status() === "live" ? "running" : status()} />
       </div>
-      <Show
-        when={records().length > 0}
-        fallback={
-          <EmptyState
-            text={
-              props.sessionId && props.sessionId !== "-"
-                ? "No output captured for this session yet."
-                : "The run log appears after a Picker starts."
-            }
-          />
-        }
+      <div
+        ref={logViewport}
+        data-testid="run-log-scroll"
+        class="min-h-0 max-h-[620px] overflow-y-auto bg-[#fcfcfb] px-3 py-3"
       >
-        <div class="max-h-[440px] overflow-y-auto">
+        <Show
+          when={records().length > 0}
+          fallback={
+            <EmptyState
+              text={
+                props.sessionId && props.sessionId !== "-"
+                  ? "No output captured for this session yet."
+                  : "The run log appears after a Picker starts."
+              }
+            />
+          }
+        >
           <For each={records()}>
-            {(record) => (
-              <article class="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-3 border-b border-[#f0f0ea] px-4 py-2 font-mono text-xs leading-5">
-                <div class="text-[#697063]">
-                  <div>{shortTime(record.ts)}</div>
-                  <div class={record.stream === "stderr" ? "text-[#9a3d2d]" : "text-[#42634a]"}>
-                    {record.stream}
-                  </div>
-                </div>
-                <pre class="min-w-0 whitespace-pre-wrap break-words text-[#252922]">
-                  {record.line}
-                  <Show when={record.truncated}> [truncated]</Show>
-                </pre>
-              </article>
-            )}
+            {(record) => <LogLineView record={record} />}
           </For>
+        </Show>
+        <For each={outbox()}>
+          {(item) => <PendingPrompt item={item} />}
+        </For>
+      </div>
+      <div class="border-t border-[#ecebe3] bg-white p-3">
+        <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <Show
+            when={!resumePreferred()}
+            fallback={<div class="text-xs text-[#666666]">No running Picker; this will resume the task.</div>}
+          >
+            <div class="inline-grid overflow-hidden rounded-md border border-[#d7d7d7] text-xs">
+              <For each={(["queue", "interrupt"] as MessageMode[])}>
+                {(item) => (
+                  <button
+                    class="px-3 py-1.5 hover:bg-[#eeeeef]"
+                    classList={{
+                      "bg-[#eeeeef] font-medium text-[#171717]": mode() === item
+                    }}
+                    type="button"
+                    onClick={() => setMode(item)}
+                  >
+                    {modeLabel(item)}
+                  </button>
+                )}
+              </For>
+            </div>
+          </Show>
+          <Show when={sendError().length > 0}>
+            <div class="break-words text-xs text-[#9a2b1f]">{sendError()}</div>
+          </Show>
         </div>
-      </Show>
+        <div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+          <textarea
+            aria-label="Run log prompt"
+            class="min-h-20 w-full resize-y rounded-lg border border-[#d7d7d7] bg-white px-3 py-2 text-sm leading-6 text-[#171717] outline-none focus:border-[#9b9b9b] focus:ring-2 focus:ring-[#e8e8e8]"
+            value={prompt()}
+            onInput={(event) => setPrompt(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                void sendPrompt();
+              }
+            }}
+            placeholder="Type a prompt, e.g. continue and create the PR"
+                  disabled={!props.sessionId || props.sessionId === "-"}
+            title={resumePreferred() ? "This task has no running Picker; sending will resume it." : undefined}
+          />
+          <button
+            class="rounded-full bg-[#171717] px-5 py-2 text-sm font-medium text-white hover:bg-[#333333] disabled:cursor-not-allowed disabled:bg-[#a3a3a3]"
+            type="button"
+            disabled={!prompt().trim() || !props.sessionId || props.sessionId === "-"}
+            onClick={() => void sendPrompt()}
+          >
+            {resumePreferred() ? "Resume Picker" : "Send"}
+          </button>
+        </div>
+      </div>
     </div>
+  );
+}
+
+function LogLineView(props: { record: SessionOutputRecord }) {
+  const parsed = createMemo(() => parseLogLine(props.record));
+  const isUser = createMemo(() => parsed().kind === "user");
+  return (
+    <article
+      class="grid gap-2 px-1 py-2"
+      classList={{
+        "justify-items-end": isUser()
+      }}
+    >
+      <div
+        class="flex w-full max-w-[min(52rem,100%)] items-center justify-between gap-3 text-xs text-[#777777]"
+        classList={{ "justify-self-end": isUser() }}
+      >
+        <div
+          class={
+            props.record.stream === "stderr"
+              ? "font-medium text-[#a23a2a]"
+              : "font-medium text-[#2f6f4f]"
+          }
+        >
+          {props.record.stream}
+        </div>
+        <time class="text-right" dateTime={props.record.ts.toISOString()}>
+          {runLogTimestamp(props.record.ts)}
+        </time>
+      </div>
+      <div
+        class="min-w-0 max-w-[min(52rem,100%)] rounded-lg border bg-white p-3 shadow-[0_1px_1px_rgba(23,23,23,0.03)]"
+        classList={{
+          "border-[#f0c9c4]": parsed().kind === "error",
+          "border-[#d9e1f7]": parsed().kind === "assistant",
+          "border-[#d7d7d7] bg-[#f4f4f5]": parsed().kind === "user",
+          "border-[#d9eadf]": parsed().kind === "tool",
+          "border-[#e6e6e6]": parsed().kind !== "error" && parsed().kind !== "assistant" && parsed().kind !== "user" && parsed().kind !== "tool"
+        }}
+      >
+        <div class="flex flex-wrap items-start justify-between gap-2">
+          <div class="min-w-0 font-medium text-[#202020]">{parsed().title}</div>
+          <Show when={props.record.truncated}>
+            <span class="rounded-full bg-[#fff2d8] px-2 py-0.5 text-xs text-[#7a4d00]">truncated</span>
+          </Show>
+        </div>
+        <Show when={parsed().body.length > 0}>
+          <div class="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-[#333333]">
+            {parsed().body}
+          </div>
+        </Show>
+        <Show when={parsed().meta.length > 0}>
+          <div class="mt-3 flex flex-wrap gap-2">
+            <For each={parsed().meta}>
+              {(item) => (
+                <span class="rounded-full border border-[#e1e1e1] bg-[#f8f8f8] px-2 py-0.5 text-xs text-[#666666]">
+                  {item}
+                </span>
+              )}
+            </For>
+          </div>
+        </Show>
+      </div>
+    </article>
+  );
+}
+
+function PendingPrompt(props: { item: MessageOutboxItem }) {
+  const detail = createMemo(() => conciseDetail(props.item.detail));
+  return (
+    <article class="grid justify-items-end gap-2 px-1 py-2">
+      <div class="flex w-full max-w-[min(52rem,100%)] items-center justify-between gap-3 text-xs text-[#777777]">
+        <div class="font-medium text-[#444444]">you</div>
+        <time class="text-right" dateTime={props.item.updatedAt.toISOString()}>
+          {runLogTimestamp(props.item.updatedAt)}
+        </time>
+      </div>
+      <div class="min-w-0 max-w-[min(52rem,100%)] rounded-lg border border-[#d7d7d7] bg-[#f4f4f5] p-3 shadow-[0_1px_1px_rgba(23,23,23,0.03)]">
+        <div class="flex flex-wrap items-start justify-between gap-2">
+          <div class="min-w-0 font-medium text-[#202020]">You</div>
+          <StatusPill status={props.item.status} />
+        </div>
+        <div class="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-[#333333]">
+          {props.item.text}
+        </div>
+        <Show when={detail().length > 0}>
+          <div class="mt-2 whitespace-pre-wrap break-words text-xs leading-5 text-[#666666]">
+            {detail()}
+          </div>
+        </Show>
+        <div class="mt-3 flex flex-wrap gap-2">
+          <span class="rounded-full border border-[#e1e1e1] bg-[#f8f8f8] px-2 py-0.5 text-xs text-[#666666]">
+            {modeLabel(props.item.mode)}
+          </span>
+        </div>
+      </div>
+    </article>
   );
 }
 
@@ -1692,8 +2132,8 @@ function SettingsView(props: { tokenSaved: boolean; subject: string }) {
 
 function Panel(props: { title: string; children: JSX.Element }) {
   return (
-    <section class="min-w-0 overflow-hidden rounded-md border border-[#dddcd4] bg-white shadow-[0_1px_2px_rgba(22,24,21,0.04)]">
-      <div class="border-b border-[#e4e3dc] px-4 py-3">
+    <section class="min-w-0 overflow-hidden rounded-lg border border-[#e5e5e5] bg-white shadow-[0_1px_2px_rgba(23,23,23,0.04)]">
+      <div class="border-b border-[#eeeeee] px-4 py-3">
         <h2 class="text-base font-semibold">{props.title}</h2>
       </div>
       {props.children}
@@ -1703,7 +2143,7 @@ function Panel(props: { title: string; children: JSX.Element }) {
 
 function StatTile(props: { stat: Stat }) {
   return (
-    <div class="rounded-md border border-[#dddcd4] bg-white p-4 shadow-[0_1px_2px_rgba(22,24,21,0.04)]">
+    <div class="rounded-lg border border-[#e5e5e5] bg-white p-4 shadow-[0_1px_2px_rgba(23,23,23,0.04)]">
       <div class="text-xs uppercase text-[#62665e]">{props.stat.label}</div>
       <div class="mt-1 text-xl font-semibold">{props.stat.value}</div>
       <div class="mt-1 truncate text-xs text-[#62665e]">{props.stat.detail}</div>
@@ -2016,6 +2456,7 @@ function statusMeta(status: string) {
       "in-review",
       "open",
       "pr-open",
+      "resuming",
       "interrupt-requested",
       "interrupt-accepted"
     ].includes(normalized)
@@ -2320,6 +2761,12 @@ function sessionMessageUrl(token: string, sessionId: string) {
     `/api/sessions/${encodeURIComponent(sessionId)}/messages`,
     window.location.href
   );
+  url.searchParams.set("token", token);
+  return url;
+}
+
+function taskResumeUrl(token: string, taskId: string) {
+  const url = new URL(`/api/tasks/${encodeURIComponent(taskId)}/resume`, window.location.href);
   url.searchParams.set("token", token);
   return url;
 }
@@ -2890,6 +3337,15 @@ function isInFlightTaskStatus(status: string) {
     normalized === "open" ||
     normalized === "pr-open"
   );
+}
+
+function shouldResumePicker(taskStatus: string, pickerStatus: string | undefined) {
+  const picker = pickerStatus ? normalizeStatus(pickerStatus) : "";
+  if (picker === "running") {
+    return false;
+  }
+  const task = normalizeStatus(taskStatus);
+  return !["queued", "running", "in-progress", "backlog", "unknown"].includes(task);
 }
 
 function countByStatus(rows: TaskRow[]) {
@@ -3546,6 +4002,45 @@ function upsertOutboxStatus(
   ].slice(0, 12);
 }
 
+function reconcilePromptAck(
+  items: MessageOutboxItem[],
+  pendingId: string,
+  rendered: MessageResponse,
+  text: string
+) {
+  const ackDetail = formatUnknown(rendered.detail);
+  const pending = items.find((item) => item.messageId === pendingId);
+  const existing = items.find((item) => item.messageId === rendered.message_id);
+  const base: MessageOutboxItem = existing ?? pending ?? {
+    messageId: rendered.message_id,
+    sessionId: rendered.session_id,
+    mode: rendered.mode,
+    status: rendered.status,
+    text,
+    detail: ackDetail,
+    updatedAt: new Date()
+  };
+  const keepExistingStatus =
+    existing !== undefined &&
+    messageStatusRank(existing.status) > messageStatusRank(rendered.status);
+  const reconciled: MessageOutboxItem = {
+    ...base,
+    messageId: rendered.message_id,
+    sessionId: rendered.session_id,
+    mode: rendered.mode,
+    status: keepExistingStatus ? base.status : rendered.status,
+    text: base.text || text,
+    detail: keepExistingStatus ? base.detail : ackDetail,
+    updatedAt: keepExistingStatus ? base.updatedAt : new Date()
+  };
+  return [
+    reconciled,
+    ...items.filter(
+      (item) => item.messageId !== pendingId && item.messageId !== rendered.message_id
+    )
+  ].slice(0, 12);
+}
+
 function messageStatusRank(status: string) {
   const ranks: Record<string, number> = {
     sending: 0,
@@ -3559,6 +4054,29 @@ function messageStatusRank(status: string) {
     "delivery-failed": 5
   };
   return ranks[status] ?? 0;
+}
+
+function isPendingDeliveryStatus(status: string) {
+  return ["sending", "queued", "interrupt-requested", "interrupt-accepted"].includes(status);
+}
+
+function conciseDetail(detail: string) {
+  const trimmed = detail.trim();
+  if (!trimmed || trimmed === "{}") {
+    return "";
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    const record = recordFromUnknown(parsed);
+    return (
+      stringField(record, "error") ??
+      stringField(record, "detail") ??
+      stringField(record, "message") ??
+      trimmed
+    );
+  } catch {
+    return trimmed;
+  }
 }
 
 function normalizeMessageMode(value: string | undefined): MessageMode {
@@ -3575,6 +4093,290 @@ function modeLabel(mode: MessageMode) {
   return mode[0].toUpperCase() + mode.slice(1);
 }
 
+function parseLogLine(record: SessionOutputRecord): ParsedLogLine {
+  const raw = record.line.trim();
+  if (!raw) {
+    return {
+      kind: "text",
+      title: "Output",
+      body: "",
+      meta: []
+    };
+  }
+  const parsed = parseJsonLike(raw);
+  if (!parsed) {
+    return {
+      kind: record.stream === "stderr" ? "error" : "text",
+      title: record.stream === "stderr" ? "Error output" : "Output",
+      body: cleanModelText(raw),
+      meta: [`seq ${record.sequence}`]
+    };
+  }
+  const event = recordFromUnknown(parsed);
+  const title = logTitle(event, record);
+  const summary = compactPayloadSummary(logPayload(event));
+  const body = logBody(event) || summary || readableEventType(logType(event)) || "Event recorded.";
+  return {
+    kind: logKind(event, record),
+    title,
+    body,
+    meta: logMeta(event, record)
+  };
+}
+
+function parseJsonLike(raw: string): unknown | undefined {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    const start = raw.indexOf("{");
+    const end = raw.lastIndexOf("}");
+    if (start >= 0 && end > start) {
+      try {
+        return JSON.parse(raw.slice(start, end + 1));
+      } catch {
+        return undefined;
+      }
+    }
+    return undefined;
+  }
+}
+
+function logKind(event: Record<string, unknown>, record: SessionOutputRecord): ParsedLogLine["kind"] {
+  const type = logType(event).toLowerCase();
+  const payload = logPayload(event);
+  const itemType = stringField(payload, "type")?.toLowerCase() ?? "";
+  const role = (stringField(event, "role") ?? stringField(payload, "role"))?.toLowerCase();
+  if (record.stream === "stderr" || type.includes("error") || stringField(event, "error")) {
+    return "error";
+  }
+  if (role === "user" || itemType === "user_message") {
+    return "user";
+  }
+  if (role === "assistant" || type.includes("assistant") || type.includes("message")) {
+    return "assistant";
+  }
+  if (
+    itemType === "command_execution" ||
+    type.includes("tool") ||
+    type.includes("command") ||
+    stringField(event, "tool_name") ||
+    stringField(payload, "tool_name")
+  ) {
+    return "tool";
+  }
+  if (type.includes("status") || type.includes("turn") || type.includes("result")) {
+    return "status";
+  }
+  return "text";
+}
+
+function logTitle(event: Record<string, unknown>, record: SessionOutputRecord) {
+  const type = logType(event);
+  const payload = logPayload(event);
+  const role = stringField(event, "role") ?? stringField(payload, "role");
+  const payloadType = stringField(payload, "type");
+  const tool = stringField(event, "tool_name") ?? stringField(payload, "tool_name") ?? stringField(event, "name");
+  if (tool) {
+    return `Tool: ${tool}`;
+  }
+  if (payloadType === "command_execution") {
+    return commandTitle(payload);
+  }
+  if (payloadType === "agent_message" || role === "assistant") {
+    return "Assistant";
+  }
+  if (role === "assistant") {
+    return "Assistant";
+  }
+  if (role === "user") {
+    return "User message";
+  }
+  if (type) {
+    return readableEventType(type);
+  }
+  return record.stream === "stderr" ? "Error output" : "Output";
+}
+
+function logBody(event: Record<string, unknown>): string {
+  const payload = logPayload(event);
+  const payloadType = stringField(payload, "type");
+  if (payloadType === "command_execution") {
+    return commandBody(payload);
+  }
+  if (payloadType === "agent_message") {
+    const text = stringField(payload, "text");
+    if (text) {
+      return cleanModelText(text);
+    }
+  }
+
+  const direct =
+    stringField(event, "text") ??
+    stringField(payload, "text") ??
+    stringField(event, "message") ??
+    stringField(payload, "message") ??
+    stringField(event, "content") ??
+    stringField(payload, "content") ??
+    stringField(event, "delta") ??
+    stringField(payload, "delta") ??
+    stringField(event, "output") ??
+    stringField(payload, "output") ??
+    stringField(event, "result") ??
+    stringField(payload, "result") ??
+    stringField(event, "summary") ??
+    stringField(payload, "summary") ??
+    stringField(event, "error");
+  if (direct) {
+    return cleanModelText(direct);
+  }
+  const nestedMessage = objectField(event, "message");
+  const nestedContent = stringField(nestedMessage, "content") ?? stringField(nestedMessage, "text");
+  if (nestedContent) {
+    return cleanModelText(nestedContent);
+  }
+  const content = event.content;
+  if (Array.isArray(content)) {
+    return content.map(contentPartText).filter(Boolean).join("\n\n");
+  }
+  if (Array.isArray(payload.content)) {
+    return payload.content.map(contentPartText).filter(Boolean).join("\n\n");
+  }
+  const nested = extractTextFromUnknown(payload);
+  if (nested) {
+    return nested;
+  }
+  const result = event.result;
+  if (result && typeof result === "object") {
+    return compactPayloadSummary(result as Record<string, unknown>);
+  }
+  return "";
+}
+
+function contentPartText(part: unknown): string {
+  if (typeof part === "string") {
+    return cleanModelText(part);
+  }
+  const record = recordFromUnknown(part);
+  return cleanModelText(
+    stringField(record, "text") ??
+      stringField(record, "content") ??
+      stringField(record, "message") ??
+      ""
+  );
+}
+
+function logType(event: Record<string, unknown>) {
+  return (
+    stringField(event, "type") ??
+    stringField(event, "event") ??
+    stringField(event, "event_type") ??
+    stringField(event, "kind") ??
+    ""
+  );
+}
+
+function logPayload(event: Record<string, unknown>) {
+  const item = objectField(event, "item");
+  if (Object.keys(item).length > 0) {
+    return item;
+  }
+  const payload = objectField(event, "payload");
+  if (Object.keys(payload).length > 0) {
+    return payload;
+  }
+  const data = objectField(event, "data");
+  if (Object.keys(data).length > 0) {
+    return data;
+  }
+  return event;
+}
+
+function commandTitle(payload: Record<string, unknown>) {
+  const status = stringField(payload, "status");
+  if (status === "in_progress") {
+    return "Command started";
+  }
+  if (status === "completed") {
+    return "Command completed";
+  }
+  return "Command";
+}
+
+function commandBody(payload: Record<string, unknown>) {
+  const parts: string[] = [];
+  const command = stringField(payload, "command");
+  if (command) {
+    parts.push(`$ ${command}`);
+  }
+  const output = stringField(payload, "aggregated_output");
+  if (output) {
+    parts.push(cleanModelText(output));
+  }
+  const exitCode = numberField(payload, "exit_code");
+  if (exitCode !== undefined && exitCode !== 0) {
+    parts.push(`exit code ${exitCode}`);
+  }
+  return parts.join("\n\n");
+}
+
+function extractTextFromUnknown(value: unknown, depth = 0): string {
+  if (depth > 4 || value === null || value === undefined) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return cleanModelText(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => extractTextFromUnknown(item, depth + 1)).filter(Boolean).join("\n\n");
+  }
+  if (typeof value !== "object") {
+    return "";
+  }
+  const record = value as Record<string, unknown>;
+  const direct =
+    stringField(record, "text") ??
+    stringField(record, "content") ??
+    stringField(record, "message") ??
+    stringField(record, "delta") ??
+    stringField(record, "output") ??
+    stringField(record, "result") ??
+    stringField(record, "summary");
+  if (direct) {
+    return cleanModelText(direct);
+  }
+  for (const key of ["content", "message", "payload", "item", "data", "result", "output"]) {
+    const nested = extractTextFromUnknown(record[key], depth + 1);
+    if (nested) {
+      return nested;
+    }
+  }
+  return "";
+}
+
+function logMeta(event: Record<string, unknown>, record: SessionOutputRecord) {
+  const meta: string[] = [`seq ${record.sequence}`];
+  const payload = logPayload(event);
+  appendPart(meta, "type", logType(event));
+  appendPart(meta, "role", stringField(event, "role") ?? stringField(payload, "role"));
+  appendPart(meta, "model", stringField(event, "model") ?? stringField(payload, "model"));
+  appendPart(meta, "status", stringField(event, "status") ?? stringField(payload, "status"));
+  appendPart(meta, "tool", stringField(event, "tool_name") ?? stringField(payload, "tool_name") ?? stringField(event, "name"));
+  const usage = objectField(event, "usage");
+  const usageText = usageSummary(event, usage);
+  if (usageText !== "in 0 / out 0") {
+    meta.push(usageText);
+  }
+  return meta.slice(0, 8);
+}
+
+function cleanModelText(value: string) {
+  return value
+    .replace(/\\n/g, "\n")
+    .replace(/\\"/g, '"')
+    .replace(/\s+$/g, "")
+    .trim();
+}
+
 function formatPayload(event: BusEvent) {
   if (Object.keys(event.envelope).length === 0) {
     return event.payload;
@@ -3589,6 +4391,10 @@ function formatUnknown(value: unknown) {
   return JSON.stringify(value, null, 2);
 }
 
+function loadTheme(): ThemeMode {
+  return localStorage.getItem("jam.ui.theme") === "dark" ? "dark" : "light";
+}
+
 function parseDate(value: string | undefined) {
   if (!value || value === "-") {
     return new Date(0);
@@ -3601,8 +4407,48 @@ function latestTime(value: Date | undefined) {
   return value && value.getTime() > 0 ? value.toLocaleString() : "-";
 }
 
-function shortTime(value: Date | undefined) {
-  return value && value.getTime() > 0 ? value.toLocaleTimeString() : "-";
+function runLogTimestamp(value: Date | undefined) {
+  if (!value || value.getTime() <= 0) {
+    return "-";
+  }
+  return `${relativeTime(value)} (${compactDateTime(value)})`;
+}
+
+function relativeTime(value: Date) {
+  const elapsedSeconds = Math.max(0, Math.round((Date.now() - value.getTime()) / 1000));
+  if (elapsedSeconds < 60) {
+    return `${elapsedSeconds}s ago`;
+  }
+  const elapsedMinutes = Math.round(elapsedSeconds / 60);
+  if (elapsedMinutes < 60) {
+    return `${elapsedMinutes}m ago`;
+  }
+  const elapsedHours = Math.round(elapsedMinutes / 60);
+  if (elapsedHours < 24) {
+    return `${elapsedHours}h ago`;
+  }
+  const elapsedDays = Math.round(elapsedHours / 24);
+  if (elapsedDays < 14) {
+    return `${elapsedDays}d ago`;
+  }
+  const elapsedWeeks = Math.round(elapsedDays / 7);
+  if (elapsedWeeks < 10) {
+    return `${elapsedWeeks}w ago`;
+  }
+  return `${elapsedDays}d ago`;
+}
+
+function compactDateTime(value: Date) {
+  const time = value
+    .toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+    .replace(/\s/g, "")
+    .toLowerCase();
+  const date = value.toLocaleDateString(undefined, {
+    month: "numeric",
+    day: "numeric",
+    year: "numeric"
+  });
+  return `${time} ${date}`;
 }
 
 function normalizePath(path: string) {

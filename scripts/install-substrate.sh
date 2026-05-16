@@ -111,7 +111,14 @@ run_as() {
         printf "    [dry-run] EOF\n"
         return 0
     fi
-    sudo -u "$user" -i bash
+    # `sudo -u <user> -i bash -c <stdin>` runs bash non-login/non-interactive, so
+    # it doesn't read .profile/.bashrc/.zshrc. Pre-source ~/.cargo/env (the
+    # standard rustup PATH shim) so build users that only wire cargo into a
+    # zsh-specific rc file still have it on PATH here.
+    {
+        printf '[ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"\n'
+        cat
+    } | sudo -u "$user" -i bash
 }
 
 parse_args() {

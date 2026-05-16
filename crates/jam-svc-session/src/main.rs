@@ -46,6 +46,7 @@ const OPENCODE_HARNESS: &str = "opencode-deepseek";
 const LIVE_HARNESSES: &[&str] = &[DEFAULT_HARNESS, CLAUDE_HARNESS, OPENCODE_HARNESS];
 const DRY_RUN_HARNESSES: &[&str] = &["codex-cli", "claude-code", "opencode-deepseek"];
 const DEFAULT_PROJECT: &str = "blueberry";
+const JAMBOREE_PROJECT: &str = "jamboree";
 const DEFAULT_SANDBOX_BACKEND: &str = "local";
 const DOCKER_SANDBOX_BACKEND: &str = "docker";
 const DEFAULT_SANDBOX_PROFILE: &str = "default";
@@ -53,10 +54,12 @@ const HARDENED_SANDBOX_PROFILE: &str = "hardened";
 const DEFAULT_TASK_CLASS: &str = "light-edit";
 const DEFAULT_WORKTREE_SUBJECT: &str = "tool.worktree.create";
 const DEFAULT_REPO_OPEN_PR_SUBJECT: &str = "tool.repo.open-pr";
+const DEFAULT_JAMBOREE_GITHUB_REPO: &str = "cleak/jamboree";
 const DEFAULT_CODEX_BIN: &str = "codex";
 const DEFAULT_CLAUDE_BIN: &str = "claude";
 const DEFAULT_OPENCODE_BIN: &str = "opencode";
 const DEFAULT_DOCKER_BIN: &str = "docker";
+const DEFAULT_SHELL_BIN: &str = "/bin/sh";
 const DEFAULT_DOCKER_IMAGE: &str = "jam-picker:latest";
 const DEFAULT_SYSTEMD_RUN_BIN: &str = "systemd-run";
 const DEFAULT_IONICE_BIN: &str = "ionice";
@@ -66,6 +69,7 @@ const DEFAULT_PICKER_HOME: &str = "/home/picker";
 const DEFAULT_CODEX_HOME: &str = "/home/maestro/.codex";
 const DEFAULT_SUDO_BIN: &str = "sudo";
 const DEFAULT_TRUNK_BRANCH: &str = "master";
+const DEFAULT_JAMBOREE_TRUNK_BRANCH: &str = "main";
 const DOCKER_WORKTREE_PATH: &str = "/work";
 const DOCKER_REPO_GIT_PATH: &str = "/repo.git";
 const CLAUDE_SETTINGS_REL: &[&str] = &[".claude", "settings.json"];
@@ -167,6 +171,8 @@ struct SessionConfig {
     open_pr_on_success: bool,
     pr_draft: bool,
     trunk_branch: String,
+    jamboree_github_repo: String,
+    jamboree_trunk_branch: String,
 }
 
 impl SessionConfig {
@@ -237,6 +243,10 @@ impl SessionConfig {
         let pr_draft = parse_bool_env("JAM_SESSION_OPEN_PR_DRAFT").unwrap_or(false);
         let trunk_branch =
             std::env::var("JAM_TRUNK_BRANCH").unwrap_or_else(|_| DEFAULT_TRUNK_BRANCH.into());
+        let jamboree_github_repo = std::env::var("JAM_JAMBOREE_GITHUB_REPO")
+            .unwrap_or_else(|_| DEFAULT_JAMBOREE_GITHUB_REPO.into());
+        let jamboree_trunk_branch = std::env::var("JAM_JAMBOREE_TRUNK_BRANCH")
+            .unwrap_or_else(|_| DEFAULT_JAMBOREE_TRUNK_BRANCH.into());
         Self {
             worktree_subject,
             repo_open_pr_subject,
@@ -267,6 +277,8 @@ impl SessionConfig {
             open_pr_on_success,
             pr_draft,
             trunk_branch,
+            jamboree_github_repo,
+            jamboree_trunk_branch,
         }
     }
 }
@@ -343,6 +355,9 @@ struct SpawnPickerInput {
 struct WorktreeCreateInput {
     task_id: String,
     project: String,
+    repo_path: Option<String>,
+    worktree_root: Option<String>,
+    trunk_branch: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -358,6 +373,7 @@ struct RepoOpenPrInput {
     branch: String,
     title: String,
     body: String,
+    repo: Option<String>,
     draft: bool,
     base: String,
     worktree_path: String,
@@ -373,6 +389,7 @@ struct PickerPrMetadata {
 struct PickerHandle {
     session_id: String,
     task_id: String,
+    project: String,
     harness: String,
     worktree_path: String,
     picker_trace_id: String,
@@ -774,9 +791,9 @@ async fn spawn_picker(
     launch_picker(spec, worktree_path, picker_trace, state, ctx, nats).await
 }
 
-/// Resume an earlier picker session (codex `exec resume --last`) in the
-/// worktree associated with `task_id`. Skips worktree creation and lockfile
-/// drift checks because the worktree already exists. See
+/// Resume an earlier picker session in the worktree associated with `task_id`.
+/// Skips worktree creation and lockfile drift checks because the worktree
+/// already exists. See
 /// graph/decisions/dec-post-picker-coordination.md.
 async fn resume_picker(
     payload: &[u8],
@@ -853,6 +870,7 @@ async fn launch_picker(
     let handle = PickerHandle {
         session_id: session_id.clone(),
         task_id: spec.task_id.clone(),
+        project: spec.project.clone(),
         harness: spec.harness.clone(),
         worktree_path: worktree_path.to_string_lossy().into_owned(),
         picker_trace_id: picker_trace.trace_id.to_string(),
@@ -924,10 +942,10 @@ struct SpawnSpec {
     budget_usd: Option<f64>,
     dry_run: bool,
     /// True when this spawn is a continuation of an earlier picker session
-    /// in the same worktree. Causes the codex command to use
-    /// `exec resume --last` (cwd-filtered by codex). Worktree creation
-    /// and harness lockfile verification are skipped because the worktree
-    /// must already exist from the original spawn.
+    /// in the same worktree. Causes Codex to use `exec resume --last` and
+    /// Claude Code to use `--continue`; both are cwd-filtered by the worktree.
+    /// Worktree creation and harness lockfile verification are skipped because
+    /// the worktree must already exist from the original spawn.
     resume_from_last: bool,
     /// session_id of the picker we're resuming, journaled on the new
     /// `picker.spawned` event as `parent_session_id` so the coordinator
@@ -939,12 +957,12 @@ impl SpawnSpec {
     fn from_input(input: SpawnPickerInput) -> Result<Self, SessionError> {
         validate_token("task_id", &input.task_id, TASK_ID_MAX_LEN)?;
         let project = input.project.unwrap_or_else(|| DEFAULT_PROJECT.into());
-        if project != DEFAULT_PROJECT {
+        if !supported_project(&project) {
             return Err(SessionError::protocol(
                 "unsupported-project",
-                format!("only the single Blueberry project is supported, got {project}"),
-                "Run a separate Jamboree instance for another project (dec-single-project-per-instance).",
-                "dec-single-project-per-instance",
+                format!("supported task targets are blueberry and jamboree, got {project}"),
+                "Choose the explicit Blueberry or Jamboree target when creating the task.",
+                "api-spawn-picker",
             ));
         }
 
@@ -1046,9 +1064,9 @@ impl SpawnSpec {
         })
     }
 
-    /// Build a SpawnSpec for resuming a previous codex session in the same
-    /// worktree. `prompt` becomes the new user message; codex's
-    /// `exec resume --last` cwd-filter finds the prior session.
+    /// Build a SpawnSpec for resuming a previous session in the same worktree.
+    /// `prompt` becomes the new user message; the harness decides how to find
+    /// the prior conversation from the worktree.
     fn for_resume(input: ResumePickerInput) -> Result<Self, SessionError> {
         validate_token("task_id", &input.task_id, TASK_ID_MAX_LEN)?;
         if input.prompt.trim().is_empty() {
@@ -1059,16 +1077,31 @@ impl SpawnSpec {
                 "comp-jam-svc-session-resume",
             ));
         }
+        let project = input.project.unwrap_or_else(|| DEFAULT_PROJECT.into());
+        if !supported_project(&project) {
+            return Err(SessionError::protocol(
+                "unsupported-project",
+                format!("supported task targets are blueberry and jamboree, got {project}"),
+                "Resume with the explicit Blueberry or Jamboree project.",
+                "comp-jam-svc-session-resume",
+            ));
+        }
+        let harness = input
+            .harness
+            .or_else(|| {
+                harness_from_session_id(input.parent_session_id.as_deref()).map(ToOwned::to_owned)
+            })
+            .unwrap_or_else(|| DEFAULT_HARNESS.into());
+        validate_resume_harness(&harness)?;
         let task_class = input
             .task_class
             .unwrap_or_else(|| DEFAULT_TASK_CLASS.into());
         validate_token("task_class", &task_class, TOKEN_MAX_LEN)?;
-        let prompt =
-            prompt_with_pr_metadata_instructions(input.prompt.trim(), &input.task_id);
+        let prompt = prompt_with_pr_metadata_instructions(input.prompt.trim(), &input.task_id);
         Ok(Self {
             task_id: input.task_id,
-            project: DEFAULT_PROJECT.into(),
-            harness: DEFAULT_HARNESS.into(),
+            project,
+            harness,
             sandbox_backend: DEFAULT_SANDBOX_BACKEND.into(),
             sandbox_profile: DEFAULT_SANDBOX_PROFILE.into(),
             task_class,
@@ -1087,6 +1120,12 @@ impl SpawnSpec {
 struct ResumePickerInput {
     task_id: String,
     prompt: String,
+    /// Project target for the existing worktree.
+    #[serde(default)]
+    project: Option<String>,
+    /// Harness to resume. Defaults from parent_session_id prefix, then Codex.
+    #[serde(default)]
+    harness: Option<String>,
     /// Original picker session_id we're resuming. Optional today (the
     /// coordinator supplies it when it has the picker.exited event in hand),
     /// journaled on the resumed `picker.spawned` as `parent_session_id`.
@@ -1095,6 +1134,24 @@ struct ResumePickerInput {
     /// Optional task_class hint carried forward from the original spawn.
     #[serde(default)]
     task_class: Option<String>,
+}
+
+fn harness_from_session_id(session_id: Option<&str>) -> Option<&str> {
+    let session_id = session_id?;
+    session_id.split_once(':').map(|(harness, _)| harness)
+}
+
+fn validate_resume_harness(harness: &str) -> Result<(), SessionError> {
+    validate_harness(harness, false)?;
+    if harness == DEFAULT_HARNESS || harness == CLAUDE_HARNESS {
+        return Ok(());
+    }
+    Err(SessionError::protocol(
+        "unsupported-resume-harness",
+        format!("resume-picker supports codex-cli and claude-code, got {harness}"),
+        "Resume a Codex CLI or Claude Code Picker, or start a fresh Picker for this harness.",
+        "comp-jam-svc-session-resume",
+    ))
 }
 
 fn validate_harness(harness: &str, dry_run: bool) -> Result<(), SessionError> {
@@ -1124,6 +1181,10 @@ fn validate_harness(harness: &str, dry_run: bool) -> Result<(), SessionError> {
     Ok(())
 }
 
+fn supported_project(project: &str) -> bool {
+    matches!(project, DEFAULT_PROJECT | JAMBOREE_PROJECT)
+}
+
 fn prompt_with_pr_metadata_instructions(prompt: &str, task_id: &str) -> String {
     format!(
         "{prompt}\n\n\
@@ -1145,6 +1206,9 @@ async fn create_worktree(
     let request = WorktreeCreateInput {
         task_id: spec.task_id.clone(),
         project: spec.project.clone(),
+        repo_path: None,
+        worktree_root: None,
+        trunk_branch: None,
     };
     let value: serde_json::Value = nats
         .request_traced(
@@ -1206,11 +1270,11 @@ fn build_launch_command(
         command.arg("picker");
         command.arg(format!("--preserve-env={}", env.preserve_env()));
         command.arg("--");
-        append_harness_args(&mut command, config, spec, worktree_path)?;
+        append_sudo_harness_args(&mut command, config, spec, worktree_path)?;
         let command = apply_local_resource_scope(command, config, spec, session_id);
         // The pre-exec chdir for `sudo` runs as maestro, which cannot traverse
-        // picker-owned 0700 worktrees. Codex enters the worktree after sudo via
-        // its `--cd` argument.
+        // picker-owned 0700 worktrees. Harnesses that need cwd under sudo must
+        // enter the worktree after the user switch.
         let stdout_log = direct_stdout_log_path_for_harness(&spec.harness, worktree_path)
             .filter(|_| !spec.dry_run);
         let mut command = prepare_command(command, Path::new("/"), &env, stdout_log.as_deref())?;
@@ -1249,7 +1313,7 @@ fn build_docker_launch_command(
     session_id: &str,
     env: &PickerEnv,
 ) -> Result<Command, SessionError> {
-    let repo_git_path = git_common_dir_for_worktree(worktree_path)?;
+    let repo_git_path = git_common_dir_for_worktree(worktree_path, &spec.task_id)?;
     let container_worktree = Path::new(DOCKER_WORKTREE_PATH);
     let inner_argv = inner_launch_argv(config, spec, container_worktree)?;
 
@@ -1439,47 +1503,50 @@ fn docker_container_path<'a>(path: &'a Path, label: &'static str) -> Result<&'a 
     Ok(raw)
 }
 
-fn git_common_dir_for_worktree(worktree_path: &Path) -> Result<PathBuf, SessionError> {
-    let output = StdCommand::new("git")
+fn git_common_dir_for_worktree(
+    worktree_path: &Path,
+    task_id: &str,
+) -> Result<PathBuf, SessionError> {
+    let output = run_git_common_dir(worktree_path)?;
+    if !output.status.success() {
+        repair_broken_linked_worktree(worktree_path, task_id)?;
+        let retry = run_git_common_dir(worktree_path)?;
+        if retry.status.success() {
+            let raw = String::from_utf8_lossy(&retry.stdout);
+            return PathBuf::from(raw.trim()).canonicalize().map_err(|err| {
+                worktree_gitdir_error(format!(
+                    "failed to canonicalize git common dir for {} after repair: {err}",
+                    worktree_path.display()
+                ))
+            });
+        }
+        return Err(worktree_gitdir_error(format!(
+            "git -C {} rev-parse --git-common-dir failed after repair: {}",
+            worktree_path.display(),
+            String::from_utf8_lossy(&retry.stderr).trim()
+        )));
+    }
+    let raw = String::from_utf8_lossy(&output.stdout);
+    PathBuf::from(raw.trim()).canonicalize().map_err(|err| {
+        worktree_gitdir_error(format!(
+            "failed to canonicalize git common dir for {}: {err}",
+            worktree_path.display()
+        ))
+    })
+}
+
+fn run_git_common_dir(worktree_path: &Path) -> Result<Output, SessionError> {
+    StdCommand::new("git")
         .arg("-C")
         .arg(worktree_path)
         .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
         .output()
         .map_err(|err| {
-            SessionError::protocol(
-                "worktree-gitdir-failed",
-                format!(
-                    "failed to inspect git metadata for {}: {err}",
-                    worktree_path.display()
-                ),
-                "Verify jam-svc-worktree returned a valid git worktree.",
-                "task-jam-svc-worktree-creation-protocol",
-            )
-        })?;
-    if !output.status.success() {
-        return Err(SessionError::protocol(
-            "worktree-gitdir-failed",
-            format!(
-                "git -C {} rev-parse --git-common-dir failed: {}",
-                worktree_path.display(),
-                String::from_utf8_lossy(&output.stderr).trim()
-            ),
-            "Verify jam-svc-worktree returned a valid git worktree.",
-            "task-jam-svc-worktree-creation-protocol",
-        ));
-    }
-    let raw = String::from_utf8_lossy(&output.stdout);
-    PathBuf::from(raw.trim()).canonicalize().map_err(|err| {
-        SessionError::protocol(
-            "worktree-gitdir-failed",
-            format!(
-                "failed to canonicalize git common dir for {}: {err}",
+            worktree_gitdir_error(format!(
+                "failed to inspect git metadata for {}: {err}",
                 worktree_path.display()
-            ),
-            "Verify jam-svc-worktree returned a valid git worktree.",
-            "task-jam-svc-worktree-creation-protocol",
-        )
-    })
+            ))
+        })
 }
 
 fn harness_bin<'a>(config: &'a SessionConfig, harness: &str) -> &'a Path {
@@ -1514,6 +1581,26 @@ fn append_harness_args(
     Ok(())
 }
 
+fn append_sudo_harness_args(
+    command: &mut Command,
+    config: &SessionConfig,
+    spec: &SpawnSpec,
+    worktree_path: &Path,
+) -> Result<(), SessionError> {
+    if spec.harness != CLAUDE_HARNESS || spec.dry_run {
+        return append_harness_args(command, config, spec, worktree_path);
+    }
+
+    command.arg(DEFAULT_SHELL_BIN);
+    command.arg("-lc");
+    command.arg("cd \"$1\" && shift && exec \"$@\"");
+    command.arg("sh");
+    command.arg(worktree_path);
+    command.arg(harness_launcher(config, spec, worktree_path));
+    append_live_harness_args(command, config, spec, worktree_path)?;
+    Ok(())
+}
+
 fn append_live_harness_args(
     command: &mut Command,
     config: &SessionConfig,
@@ -1532,10 +1619,6 @@ fn append_codex_args(command: &mut Command, spec: &SpawnSpec, worktree_path: &Pa
     command.arg("--ask-for-approval");
     command.arg("never");
     command.arg("exec");
-    if spec.resume_from_last {
-        command.arg("resume");
-        command.arg("--last");
-    }
     command.arg("--cd");
     command.arg(worktree_path);
     // local x default relies on the picker OS account as the boundary; Codex's
@@ -1550,11 +1633,18 @@ fn append_codex_args(command: &mut Command, spec: &SpawnSpec, worktree_path: &Pa
         command.arg("--config");
         command.arg(format!("model_reasoning_effort=\"{effort}\""));
     }
+    if spec.resume_from_last {
+        command.arg("resume");
+        command.arg("--last");
+    }
     command.arg(&spec.initial_prompt);
 }
 
 fn append_claude_args(command: &mut Command, spec: &SpawnSpec, worktree_path: &Path) {
     command.arg("--print");
+    if spec.resume_from_last {
+        command.arg("--continue");
+    }
     command.arg("--add-dir");
     command.arg(worktree_path);
     command.arg("--verbose");
@@ -3077,8 +3167,9 @@ async fn maybe_open_pr_for_successful_picker(
         branch: branch.clone(),
         title: pr_metadata.title,
         body: pr_metadata.body,
+        repo: repo_for_project(config, &handle.project),
         draft: config.pr_draft,
-        base: config.trunk_branch.clone(),
+        base: base_for_project(config, &handle.project),
         worktree_path: handle.worktree_path.clone(),
         push: true,
     };
@@ -3112,6 +3203,22 @@ async fn maybe_open_pr_for_successful_picker(
         "opened PR for successful Picker worktree"
     );
     Ok(())
+}
+
+fn repo_for_project(config: &SessionConfig, project: &str) -> Option<String> {
+    if project == JAMBOREE_PROJECT {
+        Some(config.jamboree_github_repo.clone())
+    } else {
+        None
+    }
+}
+
+fn base_for_project(config: &SessionConfig, project: &str) -> String {
+    if project == JAMBOREE_PROJECT {
+        config.jamboree_trunk_branch.clone()
+    } else {
+        config.trunk_branch.clone()
+    }
 }
 
 fn read_picker_pr_metadata(
@@ -4486,7 +4593,7 @@ fn write_picker_metadata(
     picker_trace: &TraceCtx,
     parent_trace: &TraceCtx,
 ) -> Result<(), SessionError> {
-    let git_dir = git_dir_for_worktree(worktree_path)?;
+    let git_dir = git_dir_for_worktree(worktree_path, &spec.task_id)?;
     fs::create_dir_all(&git_dir).map_err(|err| {
         SessionError::protocol(
             "picker-metadata-write-failed",
@@ -4515,37 +4622,258 @@ fn write_picker_metadata(
     })
 }
 
-fn git_dir_for_worktree(worktree_path: &Path) -> Result<PathBuf, SessionError> {
-    let output = std::process::Command::new("git")
+fn git_dir_for_worktree(worktree_path: &Path, task_id: &str) -> Result<PathBuf, SessionError> {
+    let output = run_git_dir(worktree_path)?;
+    if !output.status.success() {
+        repair_broken_linked_worktree(worktree_path, task_id)?;
+        let retry = run_git_dir(worktree_path)?;
+        if retry.status.success() {
+            let raw = String::from_utf8_lossy(&retry.stdout);
+            return resolve_git_metadata_path(worktree_path, raw.trim());
+        }
+        return Err(worktree_gitdir_error(format!(
+            "git -C {} rev-parse --git-dir failed after repair: {}",
+            worktree_path.display(),
+            String::from_utf8_lossy(&retry.stderr).trim()
+        )));
+    }
+    let raw = String::from_utf8_lossy(&output.stdout);
+    resolve_git_metadata_path(worktree_path, raw.trim())
+}
+
+fn run_git_dir(worktree_path: &Path) -> Result<Output, SessionError> {
+    std::process::Command::new("git")
         .arg("-C")
         .arg(worktree_path)
         .args(["rev-parse", "--git-dir"])
         .output()
         .map_err(|err| {
-            SessionError::protocol(
-                "worktree-gitdir-failed",
-                format!(
-                    "failed to inspect git metadata for {}: {err}",
-                    worktree_path.display()
-                ),
-                "Verify jam-svc-worktree returned a valid git worktree.",
-                "task-jam-svc-worktree-creation-protocol",
-            )
+            worktree_gitdir_error(format!(
+                "failed to inspect git metadata for {}: {err}",
+                worktree_path.display(),
+            ))
+        })
+}
+
+fn repair_broken_linked_worktree(worktree_path: &Path, task_id: &str) -> Result<(), SessionError> {
+    let git_file = worktree_path.join(".git");
+    let old_admin_dir = read_gitdir_pointer(&git_file, worktree_path)?;
+    let repo_path = repo_path_from_worktree_admin(&old_admin_dir)?;
+    let desired_admin_dir = desired_repaired_admin_dir(worktree_path, &old_admin_dir)?;
+    let branch = branch_for_task(task_id);
+    let repair_path = worktree_path
+        .parent()
+        .ok_or_else(|| {
+            worktree_gitdir_error(format!(
+                "cannot repair {} because it has no parent directory",
+                worktree_path.display()
+            ))
+        })?
+        .join(format!(
+            ".jam-repair-{}-{}",
+            task_id.replace('/', "-"),
+            std::process::id()
+        ));
+    if repair_path.exists() {
+        fs::remove_dir_all(&repair_path).map_err(|err| {
+            worktree_gitdir_error(format!(
+                "failed to remove stale repair path {}: {err}",
+                repair_path.display()
+            ))
+        })?;
+    }
+
+    let output = StdCommand::new("git")
+        .arg("-C")
+        .arg(&repo_path)
+        .args(["worktree", "add", "--force"])
+        .arg(&repair_path)
+        .arg(&branch)
+        .output()
+        .map_err(|err| {
+            worktree_gitdir_error(format!(
+                "failed to run git worktree repair fallback for {}: {err}",
+                worktree_path.display()
+            ))
         })?;
     if !output.status.success() {
-        return Err(SessionError::protocol(
-            "worktree-gitdir-failed",
-            format!(
-                "git -C {} rev-parse --git-dir failed: {}",
-                worktree_path.display(),
-                String::from_utf8_lossy(&output.stderr).trim()
-            ),
-            "Verify jam-svc-worktree returned a valid git worktree.",
-            "task-jam-svc-worktree-creation-protocol",
-        ));
+        return Err(worktree_gitdir_error(format!(
+            "git -C {} worktree add --force {} {} failed while repairing {}: {}",
+            repo_path.display(),
+            repair_path.display(),
+            branch,
+            worktree_path.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
     }
-    let raw = String::from_utf8_lossy(&output.stdout);
-    resolve_git_metadata_path(worktree_path, raw.trim())
+
+    let new_admin_dir = read_gitdir_pointer(&repair_path.join(".git"), &repair_path)?
+        .canonicalize()
+        .map_err(|err| {
+            worktree_gitdir_error(format!(
+                "failed to canonicalize repaired git dir for {}: {err}",
+                repair_path.display()
+            ))
+        })?;
+    if desired_admin_dir.exists() && desired_admin_dir != new_admin_dir {
+        fs::remove_dir_all(&desired_admin_dir).map_err(|err| {
+            worktree_gitdir_error(format!(
+                "failed to replace stale git admin dir {}: {err}",
+                desired_admin_dir.display()
+            ))
+        })?;
+    }
+    if let Some(parent) = desired_admin_dir.parent() {
+        fs::create_dir_all(parent).map_err(|err| {
+            worktree_gitdir_error(format!(
+                "failed to create git worktrees dir {}: {err}",
+                parent.display()
+            ))
+        })?;
+    }
+    if new_admin_dir != desired_admin_dir {
+        fs::rename(&new_admin_dir, &desired_admin_dir).map_err(|err| {
+            worktree_gitdir_error(format!(
+                "failed to move repaired git admin dir {} to {}: {err}",
+                new_admin_dir.display(),
+                desired_admin_dir.display()
+            ))
+        })?;
+    }
+
+    fs::write(
+        &git_file,
+        format!("gitdir: {}\n", desired_admin_dir.display()),
+    )
+    .map_err(|err| {
+        worktree_gitdir_error(format!(
+            "failed to repoint {} to repaired git dir: {err}",
+            git_file.display()
+        ))
+    })?;
+    fs::write(
+        desired_admin_dir.join("gitdir"),
+        format!("{}/.git\n", worktree_path.display()),
+    )
+    .map_err(|err| {
+        worktree_gitdir_error(format!(
+            "failed to repoint repaired git admin dir {}: {err}",
+            desired_admin_dir.display()
+        ))
+    })?;
+    if let Err(err) = fs::remove_dir_all(&repair_path) {
+        warn!(
+            path = %repair_path.display(),
+            "failed to remove temporary worktree repair directory: {err}"
+        );
+    }
+    Ok(())
+}
+
+fn desired_repaired_admin_dir(
+    worktree_path: &Path,
+    current_admin_dir: &Path,
+) -> Result<PathBuf, SessionError> {
+    let worktrees_dir = current_admin_dir.parent().ok_or_else(|| {
+        worktree_gitdir_error(format!(
+            "cannot infer stable git admin dir from {}",
+            current_admin_dir.display()
+        ))
+    })?;
+    let current_name = current_admin_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    if current_name.starts_with("-jam-repair-") || current_name.starts_with(".jam-repair-") {
+        let worktree_name = worktree_path.file_name().ok_or_else(|| {
+            worktree_gitdir_error(format!(
+                "cannot infer stable git admin dir for {}",
+                worktree_path.display()
+            ))
+        })?;
+        Ok(worktrees_dir.join(worktree_name))
+    } else {
+        Ok(current_admin_dir.to_path_buf())
+    }
+}
+
+fn read_gitdir_pointer(git_file: &Path, worktree_path: &Path) -> Result<PathBuf, SessionError> {
+    let raw = fs::read_to_string(git_file).map_err(|err| {
+        worktree_gitdir_error(format!(
+            "cannot repair {} because {} is unreadable: {err}",
+            worktree_path.display(),
+            git_file.display()
+        ))
+    })?;
+    let pointer = raw
+        .trim()
+        .strip_prefix("gitdir:")
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            worktree_gitdir_error(format!(
+                "cannot repair {} because {} is not a gitdir pointer",
+                worktree_path.display(),
+                git_file.display()
+            ))
+        })?;
+    let path = PathBuf::from(pointer);
+    Ok(if path.is_absolute() {
+        path
+    } else {
+        worktree_path.join(path)
+    })
+}
+
+fn repo_path_from_worktree_admin(admin_dir: &Path) -> Result<PathBuf, SessionError> {
+    let worktrees_dir = admin_dir.parent().ok_or_else(|| {
+        worktree_gitdir_error(format!(
+            "cannot infer repository from git admin dir {}",
+            admin_dir.display()
+        ))
+    })?;
+    if worktrees_dir.file_name().and_then(|name| name.to_str()) != Some("worktrees") {
+        return Err(worktree_gitdir_error(format!(
+            "cannot infer repository because {} is not under a worktrees directory",
+            admin_dir.display()
+        )));
+    }
+    let git_dir = worktrees_dir.parent().ok_or_else(|| {
+        worktree_gitdir_error(format!(
+            "cannot infer repository from git admin dir {}",
+            admin_dir.display()
+        ))
+    })?;
+    if git_dir.file_name().and_then(|name| name.to_str()) != Some(".git") {
+        return Err(worktree_gitdir_error(format!(
+            "cannot infer non-bare repository from git admin dir {}",
+            admin_dir.display()
+        )));
+    }
+    git_dir
+        .parent()
+        .ok_or_else(|| {
+            worktree_gitdir_error(format!(
+                "cannot infer repository from git dir {}",
+                git_dir.display()
+            ))
+        })?
+        .canonicalize()
+        .map_err(|err| {
+            worktree_gitdir_error(format!(
+                "failed to canonicalize repository for git admin dir {}: {err}",
+                admin_dir.display()
+            ))
+        })
+}
+
+fn worktree_gitdir_error(detail: impl Into<String>) -> SessionError {
+    SessionError::protocol(
+        "worktree-gitdir-failed",
+        detail,
+        "Verify jam-svc-worktree returned a valid git worktree.",
+        "task-jam-svc-worktree-creation-protocol",
+    )
 }
 
 fn resolve_git_metadata_path(
@@ -4977,6 +5305,25 @@ mod tests {
     }
 
     #[test]
+    fn jamboree_pr_handoff_targets_jamboree_repo_and_base() {
+        let config = test_config(false);
+
+        assert_eq!(
+            repo_for_project(&config, JAMBOREE_PROJECT),
+            Some(DEFAULT_JAMBOREE_GITHUB_REPO.into())
+        );
+        assert_eq!(
+            base_for_project(&config, JAMBOREE_PROJECT),
+            DEFAULT_JAMBOREE_TRUNK_BRANCH
+        );
+        assert_eq!(repo_for_project(&config, DEFAULT_PROJECT), None);
+        assert_eq!(
+            base_for_project(&config, DEFAULT_PROJECT),
+            DEFAULT_TRUNK_BRANCH
+        );
+    }
+
+    #[test]
     fn reads_picker_pr_metadata_and_prefixes_title() {
         let worktree = TempDir::new().unwrap();
         fs::create_dir_all(worktree.path().join(".jam")).unwrap();
@@ -5075,6 +5422,185 @@ mod tests {
             command_env(&command, "JAM_SESSION_ID"),
             Some(OsStr::new("claude-code:test"))
         );
+    }
+
+    #[test]
+    fn resume_spec_preserves_codex_harness_from_parent_session() {
+        let input = ResumePickerInput {
+            task_id: "task-1".into(),
+            prompt: "continue and create the PR".into(),
+            project: Some(JAMBOREE_PROJECT.into()),
+            harness: None,
+            parent_session_id: Some("codex-cli:old-session".into()),
+            task_class: Some("jamboree-self-modification".into()),
+        };
+
+        let spec = SpawnSpec::for_resume(input).unwrap();
+
+        assert_eq!(spec.harness, DEFAULT_HARNESS);
+        assert_eq!(spec.project, JAMBOREE_PROJECT);
+        assert_eq!(
+            spec.parent_session_id.as_deref(),
+            Some("codex-cli:old-session")
+        );
+        assert!(spec.resume_from_last);
+    }
+
+    #[test]
+    fn resume_spec_preserves_claude_harness_from_parent_session() {
+        let input = ResumePickerInput {
+            task_id: "task-1".into(),
+            prompt: "continue and create the PR".into(),
+            project: Some(JAMBOREE_PROJECT.into()),
+            harness: None,
+            parent_session_id: Some("claude-code:old-session".into()),
+            task_class: Some("jamboree-self-modification".into()),
+        };
+
+        let spec = SpawnSpec::for_resume(input).unwrap();
+
+        assert_eq!(spec.harness, CLAUDE_HARNESS);
+        assert_eq!(spec.project, JAMBOREE_PROJECT);
+        assert_eq!(
+            spec.parent_session_id.as_deref(),
+            Some("claude-code:old-session")
+        );
+        assert!(spec.resume_from_last);
+    }
+
+    #[test]
+    fn resume_spec_rejects_harness_without_resume_support() {
+        let err = SpawnSpec::for_resume(ResumePickerInput {
+            task_id: "task-1".into(),
+            prompt: "continue and create the PR".into(),
+            project: Some(DEFAULT_PROJECT.into()),
+            harness: Some(OPENCODE_HARNESS.into()),
+            parent_session_id: Some("opencode-deepseek:old-session".into()),
+            task_class: Some(DEFAULT_TASK_CLASS.into()),
+        })
+        .unwrap_err();
+
+        assert!(err.to_string().contains("unsupported-resume-harness"));
+    }
+
+    #[test]
+    fn builds_codex_resume_command() {
+        let config = test_config(false);
+        let spec = SpawnSpec::for_resume(ResumePickerInput {
+            task_id: "task-1".into(),
+            prompt: "continue and create the PR".into(),
+            project: Some(DEFAULT_PROJECT.into()),
+            harness: Some(DEFAULT_HARNESS.into()),
+            parent_session_id: Some("codex-cli:old-session".into()),
+            task_class: Some(DEFAULT_TASK_CLASS.into()),
+        })
+        .unwrap();
+        let worktree = TempDir::new().unwrap();
+        let parent = TraceCtx::new_root("test", "parent");
+        let picker = TraceCtx::child(&parent, "test.child", "picker");
+
+        let command = build_launch_command(
+            &config,
+            &spec,
+            worktree.path(),
+            "codex-cli:new-session",
+            &picker,
+            &parent,
+        )
+        .unwrap();
+        let args: Vec<_> = command.as_std().get_args().map(OsString::from).collect();
+
+        assert_eq!(command.as_std().get_program(), Path::new("/bin/codex"));
+        let exec_pos = args.iter().position(|arg| arg == "exec").unwrap();
+        let cd_pos = args.iter().position(|arg| arg == "--cd").unwrap();
+        let resume_pos = args.iter().position(|arg| arg == "resume").unwrap();
+        assert!(exec_pos < cd_pos);
+        assert!(cd_pos < resume_pos);
+        assert!(args
+            .windows(2)
+            .any(|window| window == [OsString::from("resume"), OsString::from("--last")]));
+        assert!(args.contains(&OsString::from("--cd")));
+        assert!(args.contains(&worktree.path().as_os_str().to_os_string()));
+    }
+
+    #[test]
+    fn builds_claude_continue_command_for_resume() {
+        let config = test_config(false);
+        let spec = SpawnSpec::for_resume(ResumePickerInput {
+            task_id: "task-1".into(),
+            prompt: "PR exists, find it and continue working".into(),
+            project: Some(DEFAULT_PROJECT.into()),
+            harness: Some(CLAUDE_HARNESS.into()),
+            parent_session_id: Some("claude-code:old-session".into()),
+            task_class: Some(DEFAULT_TASK_CLASS.into()),
+        })
+        .unwrap();
+        let worktree = TempDir::new().unwrap();
+        let parent = TraceCtx::new_root("test", "parent");
+        let picker = TraceCtx::child(&parent, "test.child", "picker");
+
+        let command = build_launch_command(
+            &config,
+            &spec,
+            worktree.path(),
+            "claude-code:new-session",
+            &picker,
+            &parent,
+        )
+        .unwrap();
+        let args: Vec<_> = command.as_std().get_args().map(OsString::from).collect();
+
+        assert_eq!(command.as_std().get_program(), Path::new("/bin/claude"));
+        assert!(args.contains(&OsString::from("--print")));
+        assert!(args.contains(&OsString::from("--continue")));
+        assert!(args.contains(&OsString::from("--add-dir")));
+        assert!(args.contains(&worktree.path().as_os_str().to_os_string()));
+        assert!(claude_events_path(worktree.path()).exists());
+        assert_eq!(
+            command_env(&command, "JAM_SESSION_ID"),
+            Some(OsStr::new("claude-code:new-session"))
+        );
+    }
+
+    #[test]
+    fn builds_sudo_claude_continue_command_from_worktree() {
+        let config = test_config(true);
+        let spec = SpawnSpec::for_resume(ResumePickerInput {
+            task_id: "task-1".into(),
+            prompt: "PR exists, find it and continue working".into(),
+            project: Some(DEFAULT_PROJECT.into()),
+            harness: Some(CLAUDE_HARNESS.into()),
+            parent_session_id: Some("claude-code:old-session".into()),
+            task_class: Some(DEFAULT_TASK_CLASS.into()),
+        })
+        .unwrap();
+        let worktree = TempDir::new().unwrap();
+        let parent = TraceCtx::new_root("test", "parent");
+        let picker = TraceCtx::child(&parent, "test.child", "picker");
+
+        let command = build_launch_command(
+            &config,
+            &spec,
+            worktree.path(),
+            "claude-code:new-session",
+            &picker,
+            &parent,
+        )
+        .unwrap();
+        let std_command = command.as_std();
+        let args: Vec<_> = std_command.get_args().map(OsString::from).collect();
+
+        assert_eq!(std_command.get_program(), Path::new("/usr/bin/sudo"));
+        assert_eq!(std_command.get_current_dir(), Some(Path::new("/")));
+        assert_eq!(args[5], OsString::from(DEFAULT_SHELL_BIN));
+        assert_eq!(args[6], OsString::from("-lc"));
+        assert_eq!(args[7], OsString::from("cd \"$1\" && shift && exec \"$@\""));
+        assert_eq!(args[8], OsString::from("sh"));
+        assert_eq!(args[9], worktree.path().as_os_str().to_os_string());
+        assert_eq!(args[10], OsString::from("/bin/claude"));
+        assert!(args.contains(&OsString::from("--continue")));
+        assert!(args.contains(&OsString::from("--add-dir")));
+        assert!(args.contains(&worktree.path().as_os_str().to_os_string()));
     }
 
     #[test]
@@ -5626,6 +6152,44 @@ github-mcp = { url = "https://api.githubcopilot.com/mcp/", enabled = true, auth 
     }
 
     #[test]
+    fn repairs_missing_linked_worktree_admin_dir_before_resume() {
+        let tmp = TempDir::new().unwrap();
+        let repo = tmp.path().join("repo");
+        let worktree = tmp.path().join("task-1");
+        fs::create_dir(&repo).unwrap();
+        git_ok(&repo, &["init", "-q"]);
+        git_ok(&repo, &["config", "user.email", "test@example.com"]);
+        git_ok(&repo, &["config", "user.name", "Test User"]);
+        fs::write(repo.join("a.txt"), "a\n").unwrap();
+        git_ok(&repo, &["add", "a.txt"]);
+        git_ok(&repo, &["commit", "-q", "-m", "init"]);
+        git_ok(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "task/task-1",
+                worktree.to_str().unwrap(),
+                "HEAD",
+            ],
+        );
+        fs::write(worktree.join("a.txt"), "a\nchanged\n").unwrap();
+
+        let admin_dir = read_gitdir_pointer(&worktree.join(".git"), &worktree).unwrap();
+        fs::remove_dir_all(&admin_dir).unwrap();
+
+        let repaired = git_dir_for_worktree(&worktree, "task-1").unwrap();
+        let repaired_pointer = read_gitdir_pointer(&worktree.join(".git"), &worktree).unwrap();
+        let status = git_stdout(&worktree, &["status", "--short"]);
+
+        assert!(repaired.exists());
+        assert_eq!(repaired_pointer, admin_dir);
+        assert!(status.contains(" M a.txt"), "{status}");
+    }
+
+    #[test]
     fn default_picker_path_includes_tempyr_install_dir() {
         let path = default_picker_path();
         let path = path.to_string_lossy();
@@ -5802,6 +6366,7 @@ github-mcp = { url = "https://api.githubcopilot.com/mcp/", enabled = true, auth 
             handle: PickerHandle {
                 session_id: session_id.into(),
                 task_id: "task-1".into(),
+                project: DEFAULT_PROJECT.into(),
                 harness: DEFAULT_HARNESS.into(),
                 worktree_path: worktree.to_string_lossy().into_owned(),
                 picker_trace_id: TraceCtx::new_root("test", "picker").trace_id.to_string(),
@@ -5853,6 +6418,8 @@ github-mcp = { url = "https://api.githubcopilot.com/mcp/", enabled = true, auth 
             open_pr_on_success: true,
             pr_draft: true,
             trunk_branch: DEFAULT_TRUNK_BRANCH.into(),
+            jamboree_github_repo: DEFAULT_JAMBOREE_GITHUB_REPO.into(),
+            jamboree_trunk_branch: DEFAULT_JAMBOREE_TRUNK_BRANCH.into(),
         }
     }
 
@@ -5896,10 +6463,44 @@ github-mcp = { url = "https://api.githubcopilot.com/mcp/", enabled = true, auth 
         assert!(output.status.success());
     }
 
+    fn git_ok(path: &Path, args: &[&str]) {
+        let output = StdCommand::new("git")
+            .arg("-C")
+            .arg(path)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git -C {} {} failed: {}",
+            path.display(),
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn git_stdout(path: &Path, args: &[&str]) -> String {
+        let output = StdCommand::new("git")
+            .arg("-C")
+            .arg(path)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git -C {} {} failed: {}",
+            path.display(),
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    }
+
     fn test_handle(harness: &str, worktree_path: &Path, dry_run: bool) -> PickerHandle {
         PickerHandle {
             session_id: format!("{harness}:test"),
             task_id: "task-1".into(),
+            project: DEFAULT_PROJECT.into(),
             harness: harness.into(),
             worktree_path: worktree_path.to_string_lossy().into_owned(),
             picker_trace_id: "picker-trace".into(),

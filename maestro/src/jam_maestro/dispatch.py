@@ -33,6 +33,7 @@ DEFAULT_TASK_PREFERENCES: dict[str, list[str]] = {
     "compile-heavy-rust": ["codex-cli", "claude-code", "opencode-deepseek"],
     "doc-generation": ["opencode-deepseek", "claude-code", "codex-cli"],
     "ecs-refactor": ["claude-code", "codex-cli", "opencode-deepseek"],
+    "jamboree-self-modification": ["codex-cli", "claude-code", "opencode-deepseek"],
     "light-edit": ["codex-cli", "opencode-deepseek", "claude-code"],
     "risky-architecture": ["claude-code", "codex-cli", "opencode-deepseek"],
     "shader-variant": ["claude-code", "codex-cli", "opencode-deepseek"],
@@ -49,6 +50,7 @@ DEFAULT_BUDGET_USD: dict[str, float] = {
     "compile-heavy-rust": 8.0,
     "doc-generation": 1.0,
     "ecs-refactor": 12.0,
+    "jamboree-self-modification": 10.0,
     "light-edit": 2.0,
     "risky-architecture": 20.0,
     "shader-variant": 8.0,
@@ -343,9 +345,21 @@ def _spawn_request(wake: TaskWake, harness: str, task_class: str) -> SessionSpaw
 
 
 def _initial_prompt(wake: TaskWake, harness: str, task_class: str) -> str:
+    if wake.project == "jamboree":
+        project_guidance = (
+            "Project: Jamboree, the orchestrator monorepo. This is a self-modifying task.\n"
+            "Work only in the isolated Jamboree task worktree. Do not edit /home/caleb/jamboree "
+            "directly and do not disturb active Blueberry worktrees. Preserve the explicit "
+            "Blueberry-vs-Jamboree target boundary in UI and API changes. When the change affects "
+            "runtime services or deployment, update the relevant docs/scripts and include the exact "
+            "build, test, and deploy commands in the PR body. Only run a live deploy when the task "
+            "text explicitly asks for deployment."
+        )
+    else:
+        project_guidance = "Project: Blueberry, the Bevy/Rust voxel game."
     return (
         f"Task: {wake.description}\n\n"
-        "Project: Blueberry, the Bevy/Rust voxel game.\n"
+        f"{project_guidance}\n"
         f"Task class: {task_class}.\n"
         f"Dispatch harness: {harness}.\n\n"
         "Apply the loaded Jamboree and Blueberry skills. Keep edits scoped to the task. "

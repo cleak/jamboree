@@ -12,6 +12,9 @@ pub mod contracts;
 /// Shared file-hashing helpers.
 pub mod hashing;
 
+/// Registry of patchable Rust binaries (used by jam-cli and jam-patch-agent).
+pub mod deploy_targets;
+
 /// Shared runtime path resolution helpers.
 pub mod paths;
 

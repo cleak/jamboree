@@ -23,6 +23,7 @@ base64.workspace = true
 chrono.workspace = true
 futures.workspace = true
 hex.workspace = true
+jam-events = { path = "../jam-events" }
 jam-nats = { path = "../jam-nats" }
 jam-tools-core = { path = "../jam-tools-core" }
 jam-trace = { path = "../jam-trace" }

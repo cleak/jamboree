@@ -431,32 +431,95 @@ async fn process_patch_staged(
         }
     };
     let staged = envelope.payload;
+    let strategy = jam_tools_core::deploy_targets::find(&staged.service)
+        .map(|t| t.strategy)
+        .unwrap_or(jam_tools_core::deploy_targets::DeployStrategy::AtomicSwap);
     info!(
         service = %staged.service,
         version = %staged.version,
         path = %staged.staging_path,
-        "patch.staged received; running §20.3 atomic-swap",
+        strategy = ?strategy,
+        "patch.staged received",
     );
-    let request = ApplyRequest {
-        service: staged.service.clone(),
-        version: staged.version.clone(),
-        staging_path: PathBuf::from(&staged.staging_path),
-        expected_sha256: staged.binary_sha256.clone(),
-        requested_by: staged.requested_by.clone(),
-        trace_ctx: ctx,
-        nats_url: config.nats_url.clone(),
-        nats_token: config.nats_token.clone(),
-    };
-    match patch_ops::apply_staged_patch(nats, request).await {
-        Ok(updated) => {
-            info!(
-                manifest_id = %updated.manifest_id,
-                revision = updated.revision,
-                "atomic-swap complete; patch.applied emitted",
-            );
+    match strategy {
+        jam_tools_core::deploy_targets::DeployStrategy::AtomicSwap => {
+            let request = ApplyRequest {
+                service: staged.service.clone(),
+                version: staged.version.clone(),
+                staging_path: PathBuf::from(&staged.staging_path),
+                expected_sha256: staged.binary_sha256.clone(),
+                requested_by: staged.requested_by.clone(),
+                trace_ctx: ctx,
+                nats_url: config.nats_url.clone(),
+                nats_token: config.nats_token.clone(),
+            };
+            match patch_ops::apply_staged_patch(nats, request).await {
+                Ok(updated) => {
+                    info!(
+                        manifest_id = %updated.manifest_id,
+                        revision = updated.revision,
+                        "atomic-swap complete; patch.applied emitted",
+                    );
+                }
+                Err(err) => {
+                    warn!("apply_staged_patch failed: {err}");
+                }
+            }
         }
-        Err(err) => {
-            warn!("apply_staged_patch failed: {err}");
+        jam_tools_core::deploy_targets::DeployStrategy::StopReplaceRestart { process_name } => {
+            let request = patch_ops::StopReplaceRequest {
+                service: staged.service.clone(),
+                version: staged.version.clone(),
+                staging_path: PathBuf::from(&staged.staging_path),
+                expected_sha256: staged.binary_sha256.clone(),
+                requested_by: staged.requested_by.clone(),
+                trace_ctx: ctx,
+                process_name: process_name.to_string(),
+            };
+            match patch_ops::stop_replace_restart(nats, request).await {
+                Ok(()) => {
+                    info!(
+                        process = %process_name,
+                        "stop-replace-restart complete; patch.confirmed emitted",
+                    );
+                }
+                Err(err) => {
+                    warn!("stop_replace_restart failed: {err}");
+                }
+            }
+        }
+        jam_tools_core::deploy_targets::DeployStrategy::PythonApp {
+            install_dir,
+            process_name,
+        } => {
+            let request = patch_ops::PythonAppRequest {
+                service: staged.service.clone(),
+                version: staged.version.clone(),
+                source_path: PathBuf::from(&staged.staging_path),
+                requested_by: staged.requested_by.clone(),
+                trace_ctx: ctx,
+                install_dir: install_dir.to_string(),
+                process_name: process_name.to_string(),
+            };
+            match patch_ops::deploy_python_app(nats, request).await {
+                Ok(()) => info!(process = %process_name, "python-app deploy complete"),
+                Err(err) => warn!("deploy_python_app failed: {err}"),
+            }
+        }
+        jam_tools_core::deploy_targets::DeployStrategy::CanonicalBinary { dest_path } => {
+            let request = patch_ops::CanonicalBinaryRequest {
+                service: staged.service.clone(),
+                version: staged.version.clone(),
+                staging_path: PathBuf::from(&staged.staging_path),
+                expected_sha256: staged.binary_sha256.clone(),
+                requested_by: staged.requested_by.clone(),
+                trace_ctx: ctx,
+                dest_path: PathBuf::from(dest_path),
+            };
+            match patch_ops::install_canonical_binary(nats, request).await {
+                Ok(()) => info!(dest = %dest_path, "canonical-binary install complete"),
+                Err(err) => warn!("install_canonical_binary failed: {err}"),
+            }
         }
     }
 }
@@ -850,7 +913,9 @@ async fn check_ping(
             .get("service")
             .and_then(Value::as_str)
             .ok_or_else(|| "ping response missing string service".to_owned())?;
-        let expected_service = format!("jam-svc-{service}");
+        let expected_service = jam_tools_core::deploy_targets::service_id(service)
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("jam-svc-{service}"));
         if actual_service != expected_service {
             return Err(format!(
                 "ping came from {actual_service}, expected {expected_service}"
@@ -1080,12 +1145,15 @@ fn start_manifest_route_process(
     }
     let log_dir = config.jam_home.join("logs").join("patch-agent");
     fs::create_dir_all(&log_dir)?;
+    let binary_basename = jam_tools_core::deploy_targets::binary_name(service)
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("jam-svc-{service}"));
     let stdout_path = log_dir.join(format!(
-        "jam-svc-{service}-{}-restart.stdout.log",
+        "{binary_basename}-{}-restart.stdout.log",
         route.current_version
     ));
     let stderr_path = log_dir.join(format!(
-        "jam-svc-{service}-{}-restart.stderr.log",
+        "{binary_basename}-{}-restart.stderr.log",
         route.current_version
     ));
     let stdout = File::create(&stdout_path)?;

@@ -37,9 +37,11 @@ case "$SRC" in
 esac
 
 # Dest name must be a bare jam-* filename (no slashes, no leading dot).
+# `jam` itself is the one allowed exception: per CLAUDE.md the CLI binary
+# drops the prefix, so deploys of the CLI need to land at /opt/jam/bin/jam.
 case "$NAME" in
-    jam-*) ;;
-    *) printf 'jam-install-bin: dest name must start with jam-\n' >&2; exit 65 ;;
+    jam|jam-*) ;;
+    *) printf 'jam-install-bin: dest name must be jam or start with jam-\n' >&2; exit 65 ;;
 esac
 case "$NAME" in
     */*|.*) printf 'jam-install-bin: dest name must be a bare filename\n' >&2; exit 65 ;;

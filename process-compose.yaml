@@ -103,7 +103,7 @@ processes:
   jam-svc-session:
     description: "Session tool service — spawn-picker, lifecycle."
     user: maestro
-    command: "/home/maestro/.jam/bin/jam-svc-session"
+    command: "/home/maestro/.jam/bin/jam-svc-session-0.1.0-7415f00-worktree-adminfix"
     environment:
       - JAM_HARNESS_LOCKFILE_POLICY=warn
     depends_on:
@@ -381,10 +381,15 @@ processes:
   ui-server:
     description: "axum + WebSocket bridge to NATS; SolidJS SPA (§4.11)."
     user: maestro
-    command: "/opt/jam/bin/jam-ui-server"
+    # Fixed path (no version suffix) so `jam deploy ui-server`'s
+    # StopReplaceRestart strategy can rename a new binary into place and
+    # restart this process without editing the YAML. See
+    # crates/jam-tools-core/src/deploy_targets.rs.
+    command: "/home/maestro/.jam/bin/jam-ui-server"
     environment:
       - JAM_UI_BIND=0.0.0.0:8787
       - JAM_UI_ALLOW_BIND_ADDRS=0.0.0.0,127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10
+      - JAM_UI_STATIC_DIR=/home/caleb/jamboree/ui/dist
     depends_on:
       nats:
         condition: process_healthy

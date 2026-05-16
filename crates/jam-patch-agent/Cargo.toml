@@ -22,6 +22,7 @@ jam-tools-core = { path = "../jam-tools-core" }
 jam-trace = { path = "../jam-trace" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+tempfile = "3.14"
 thiserror = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true }

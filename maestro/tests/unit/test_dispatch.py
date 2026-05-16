@@ -191,12 +191,31 @@ def test_dispatch_blocks_not_ready_snapshot() -> None:
     assert dispatch.reason == "not-ready"
 
 
-def _wake(task_class: str) -> TaskWake:
+def test_jamboree_dispatch_preserves_self_modification_target() -> None:
+    dispatch = choose_dispatch(
+        wake=_wake("jamboree-self-modification", project="jamboree"),
+        world_snapshot=_snapshot(
+            {
+                "codex-cli/local-messages": _quota("available", "local-messages"),
+                "claude-code/rate-limit": _quota("available", "rate-limit"),
+            }
+        ),
+        skills=[],
+    )
+
+    assert isinstance(dispatch, DispatchChoice)
+    assert dispatch.spawn_request.project == "jamboree"
+    assert dispatch.spawn_request.task_class == "jamboree-self-modification"
+    assert "self-modifying task" in dispatch.spawn_request.initial_prompt
+    assert "/home/caleb/jamboree directly" in dispatch.spawn_request.initial_prompt
+
+
+def _wake(task_class: str, *, project: str = "blueberry") -> TaskWake:
     return TaskWake(
         trace_id=TRACE,
         task_id="task-1",
         description="do work",
-        project="blueberry",
+        project=project,
         task_class=task_class,
     )
 

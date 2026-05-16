@@ -125,6 +125,15 @@ struct SessionMessageInput {
 }
 
 #[derive(Debug, Deserialize)]
+struct TaskResumeInput {
+    prompt: String,
+    project: Option<String>,
+    harness: Option<String>,
+    parent_session_id: Option<String>,
+    task_class: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct TaskSpawnInput {
     description: String,
     project: Option<String>,
@@ -205,6 +214,7 @@ struct ErrorResponse {
     detail: String,
 }
 
+#[derive(Debug)]
 struct ApiError {
     status: StatusCode,
     error: &'static str,
@@ -329,7 +339,9 @@ fn app(state: AppState, static_dir: &Path) -> Router {
         .route("/api/events/recent", get(recent_events_handler))
         .route("/api/quota", get(quota_handler))
         .route("/api/runtime/services", get(runtime_services_handler))
+        .route("/api/deploy", get(deploy_targets_handler).post(deploy_handler))
         .route("/api/tasks", get(tasks_handler).post(task_spawn_handler))
+        .route("/api/tasks/{task_id}/resume", post(task_resume_handler))
         .route("/api/trace/{trace_id}", get(trace_replay_handler))
         .route("/api/traces/find", get(trace_find_handler))
         .route(
@@ -428,6 +440,367 @@ async fn runtime_services_handler(
     }
 }
 
+#[derive(Debug, Serialize)]
+struct DeployTargetView {
+    short_name: String,
+    crate_name: String,
+    binary_name: String,
+    strategy: String,
+}
+
+async fn deploy_targets_handler(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<TokenQuery>,
+) -> impl IntoResponse {
+    match token_is_valid(&state.token_store, &query.token) {
+        Ok(true) => {}
+        Ok(false) => return StatusCode::UNAUTHORIZED.into_response(),
+        Err(err) => {
+            error!("deploy targets auth failed: {err}");
+            return trace_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "auth-check-failed",
+                err.to_string(),
+            );
+        }
+    }
+    let targets: Vec<_> = jam_tools_core::deploy_targets::DEPLOY_TARGETS
+        .iter()
+        .map(|t| DeployTargetView {
+            short_name: t.short_name.to_owned(),
+            crate_name: t.crate_name.to_owned(),
+            binary_name: t.binary_name.to_owned(),
+            strategy: match t.strategy {
+                jam_tools_core::deploy_targets::DeployStrategy::AtomicSwap => "atomic-swap".into(),
+                jam_tools_core::deploy_targets::DeployStrategy::StopReplaceRestart { .. } => {
+                    "stop-replace-restart".into()
+                }
+                jam_tools_core::deploy_targets::DeployStrategy::PythonApp { .. } => {
+                    "python-app".into()
+                }
+                jam_tools_core::deploy_targets::DeployStrategy::CanonicalBinary { .. } => {
+                    "canonical-binary".into()
+                }
+            },
+        })
+        .collect();
+    Json(targets).into_response()
+}
+
+#[derive(Debug, Deserialize)]
+struct DeployRequest {
+    service: String,
+    /// Optional override of the staged binary path. Defaults to the caleb
+    /// monorepo's `target/release/<binary_name>` (i.e. wherever the operator
+    /// last ran `cargo build --release`).
+    staging_path: Option<String>,
+    /// Optional version override. Defaults to `<workspace>-<content-hash>`.
+    version: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct DeployResponse {
+    service: String,
+    version: String,
+    staging_path: String,
+    outcome: String,
+    detail: String,
+    trace_id: String,
+}
+
+const DEFAULT_DEPLOY_WORKSPACE_ROOT: &str = "/home/caleb/jamboree";
+const DEPLOY_WAIT_SECS: u64 = 90;
+
+async fn deploy_handler(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<TokenQuery>,
+    Json(input): Json<DeployRequest>,
+) -> impl IntoResponse {
+    let user = match token_record(&state.token_store, &query.token) {
+        Ok(Some(record)) => record,
+        Ok(None) => return StatusCode::UNAUTHORIZED.into_response(),
+        Err(err) => {
+            error!("deploy auth failed: {err}");
+            return trace_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "auth-check-failed",
+                err.to_string(),
+            );
+        }
+    };
+
+    let service = input.service.trim().to_owned();
+    if service.is_empty() {
+        return trace_error_response(StatusCode::BAD_REQUEST, "missing-service", "service is required".into());
+    }
+    let target = match jam_tools_core::deploy_targets::find(&service) {
+        Some(t) => t,
+        None => {
+            return trace_error_response(
+                StatusCode::BAD_REQUEST,
+                "unknown-service",
+                format!(
+                    "no deploy target named `{service}`; see GET /api/deploy for the list"
+                ),
+            );
+        }
+    };
+
+    use jam_tools_core::deploy_targets::DeployStrategy as Strategy;
+    // PythonApp stages a source directory; everything else stages a built
+    // binary file. The defaults reflect that.
+    let is_python_app = matches!(target.strategy, Strategy::PythonApp { .. });
+    let staging_path = match input.staging_path {
+        Some(raw) => PathBuf::from(raw),
+        None => {
+            if is_python_app {
+                Path::new(DEFAULT_DEPLOY_WORKSPACE_ROOT).join("maestro")
+            } else {
+                Path::new(DEFAULT_DEPLOY_WORKSPACE_ROOT)
+                    .join("target")
+                    .join("release")
+                    .join(target.binary_name)
+            }
+        }
+    };
+    if is_python_app {
+        if !staging_path.is_dir() {
+            return trace_error_response(
+                StatusCode::BAD_REQUEST,
+                "staging-path-missing",
+                format!(
+                    "no directory at {} (PythonApp deploy expects a source tree with pyproject.toml)",
+                    staging_path.display()
+                ),
+            );
+        }
+    } else if !staging_path.is_file() {
+        return trace_error_response(
+            StatusCode::BAD_REQUEST,
+            "staging-path-missing",
+            format!(
+                "no file at {} — build the binary first (cargo build --release -p {})",
+                staging_path.display(),
+                target.crate_name
+            ),
+        );
+    }
+
+    // For PythonApp the binary_sha256 field is required by the schema but
+    // patch-agent ignores it. Use a sentinel so future binary-flow consumers
+    // can spot the no-binary case explicitly.
+    let binary_sha256 = if is_python_app {
+        "python-app-no-binary-hash".to_owned()
+    } else {
+        match jam_tools_core::hashing::sha256_file_hex(&staging_path) {
+            Ok(value) => value,
+            Err(err) => {
+                return trace_error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "hash-failed",
+                    err,
+                );
+            }
+        }
+    };
+    let version = match input.version {
+        Some(value) => value,
+        None => {
+            if is_python_app {
+                // No content hash for python source; use a timestamp.
+                format!("0.1.0-ui-{}", Utc::now().timestamp())
+            } else {
+                let short = &binary_sha256[..binary_sha256.len().min(7)];
+                format!("0.1.0-ui-{short}")
+            }
+        }
+    };
+    let trace_ctx = TraceCtx::new_root(
+        "ui.deploy",
+        format!("UI-initiated deploy of {service} {version}"),
+    );
+    let trace_id = trace_ctx.trace_id.to_string();
+    let staging_path_str = staging_path.display().to_string();
+
+    // Subscribe BEFORE publishing so we don't miss a fast confirmation.
+    let nats = state.nats.clone();
+    let confirmed_sub = match nats.client().subscribe("patch.confirmed").await {
+        Ok(sub) => sub,
+        Err(err) => {
+            return trace_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "nats-subscribe-failed",
+                err.to_string(),
+            );
+        }
+    };
+    let failed_sub = match nats.client().subscribe("patch.failed").await {
+        Ok(sub) => sub,
+        Err(err) => {
+            return trace_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "nats-subscribe-failed",
+                err.to_string(),
+            );
+        }
+    };
+
+    let staged = jam_events::generated::PatchStaged {
+        service: service.clone(),
+        version: version.clone(),
+        staging_path: staging_path_str.clone(),
+        binary_sha256: binary_sha256.clone(),
+        requested_by: user.user_id.clone(),
+        ts: Utc::now(),
+    };
+    let envelope = jam_events::EventEnvelope::new(
+        "patch.staged",
+        1,
+        0,
+        trace_id.clone(),
+        user.user_id.clone(),
+        staged,
+    );
+    if let Err(err) = nats
+        .publish_traced("patch.staged", &envelope, &trace_ctx)
+        .await
+    {
+        return trace_error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "publish-failed",
+            err.to_string(),
+        );
+    }
+
+    let outcome = wait_for_deploy_terminal(
+        confirmed_sub,
+        failed_sub,
+        &trace_id,
+        &service,
+        Duration::from_secs(DEPLOY_WAIT_SECS),
+    )
+    .await;
+    match outcome {
+        Ok((status, detail)) => Json(DeployResponse {
+            service,
+            version,
+            staging_path: staging_path_str,
+            outcome: status,
+            detail,
+            trace_id,
+        })
+        .into_response(),
+        Err(err) => trace_error_response(StatusCode::GATEWAY_TIMEOUT, "deploy-timeout", err),
+    }
+}
+
+async fn wait_for_deploy_terminal(
+    mut confirmed_sub: jam_nats::async_nats::Subscriber,
+    mut failed_sub: jam_nats::async_nats::Subscriber,
+    expected_trace_id: &str,
+    expected_service: &str,
+    timeout: Duration,
+) -> Result<(String, String), String> {
+    use jam_events::generated::PatchConfirmed;
+    let deadline = tokio::time::sleep(timeout);
+    tokio::pin!(deadline);
+    loop {
+        tokio::select! {
+            () = &mut deadline => {
+                return Err(format!(
+                    "no terminal patch event for trace {expected_trace_id} within {}s",
+                    timeout.as_secs()
+                ));
+            }
+            msg = confirmed_sub.next() => {
+                let Some(msg) = msg else {
+                    return Err("patch.confirmed subscription closed unexpectedly".into());
+                };
+                if let Some((service, version, checks_run, _trace_id)) =
+                    decode_patch_event::<PatchConfirmed>(&msg.payload, expected_trace_id, expected_service)
+                {
+                    let detail = if checks_run == 0 {
+                        format!("version {version} already current (no-op)")
+                    } else {
+                        format!("version {version} confirmed by {checks_run} checks")
+                    };
+                    return Ok(("confirmed".into(), format!("{service}: {detail}")));
+                }
+            }
+            msg = failed_sub.next() => {
+                let Some(msg) = msg else {
+                    return Err("patch.failed subscription closed unexpectedly".into());
+                };
+                if let Some((service, _version, _checks_run, summary)) =
+                    decode_patch_failed(&msg.payload, expected_trace_id, expected_service)
+                {
+                    return Ok(("failed".into(), format!("{service}: {summary}")));
+                }
+            }
+        }
+    }
+}
+
+fn decode_patch_event<P>(
+    payload: &[u8],
+    expected_trace_id: &str,
+    expected_service: &str,
+) -> Option<(String, String, u32, String)>
+where
+    P: serde::de::DeserializeOwned,
+    P: PatchEventLike,
+{
+    let envelope: serde_json::Value = serde_json::from_slice(payload).ok()?;
+    let trace_id = envelope.get("trace_id")?.as_str()?;
+    if trace_id != expected_trace_id {
+        return None;
+    }
+    let payload_val = envelope.get("payload")?;
+    let payload: P = serde_json::from_value(payload_val.clone()).ok()?;
+    if payload.service() != expected_service {
+        return None;
+    }
+    Some((
+        payload.service().to_owned(),
+        payload.version().to_owned(),
+        payload.checks_run(),
+        trace_id.to_owned(),
+    ))
+}
+
+fn decode_patch_failed(
+    payload: &[u8],
+    expected_trace_id: &str,
+    expected_service: &str,
+) -> Option<(String, String, u32, String)> {
+    let envelope: serde_json::Value = serde_json::from_slice(payload).ok()?;
+    let trace_id = envelope.get("trace_id")?.as_str()?;
+    if trace_id != expected_trace_id {
+        return None;
+    }
+    let payload_val = envelope.get("payload")?;
+    let service = payload_val.get("service")?.as_str()?;
+    if service != expected_service {
+        return None;
+    }
+    let summary = payload_val
+        .get("summary")
+        .and_then(|v| v.as_str())
+        .unwrap_or("(no summary)");
+    Some((service.to_owned(), String::new(), 0, summary.to_owned()))
+}
+
+trait PatchEventLike {
+    fn service(&self) -> &str;
+    fn version(&self) -> &str;
+    fn checks_run(&self) -> u32;
+}
+impl PatchEventLike for jam_events::generated::PatchConfirmed {
+    fn service(&self) -> &str { &self.service }
+    fn version(&self) -> &str { &self.version }
+    fn checks_run(&self) -> u32 { self.checks_run }
+}
+
 async fn tasks_handler(
     State(state): State<Arc<AppState>>,
     Query(query): Query<TokenQuery>,
@@ -473,7 +846,7 @@ async fn task_spawn_handler(
         Ok(value) => value,
         Err(err) => return err.into_response(),
     };
-    let project = match normalize_optional_input(input.project.as_deref(), "blueberry", "project") {
+    let project = match normalize_project(input.project.as_deref()) {
         Ok(value) => value,
         Err(err) => return err.into_response(),
     };
@@ -531,6 +904,93 @@ async fn task_spawn_handler(
         subject: "journal.task.requested",
     })
     .into_response()
+}
+
+async fn task_resume_handler(
+    State(state): State<Arc<AppState>>,
+    AxumPath(task_id): AxumPath<String>,
+    Query(query): Query<TokenQuery>,
+    Json(input): Json<TaskResumeInput>,
+) -> impl IntoResponse {
+    match token_record(&state.token_store, &query.token) {
+        Ok(Some(_record)) => {}
+        Ok(None) => return StatusCode::UNAUTHORIZED.into_response(),
+        Err(err) => {
+            error!("task resume auth failed: {err}");
+            return trace_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "auth-check-failed",
+                err.to_string(),
+            );
+        }
+    };
+
+    let prompt = match normalize_required_input(&input.prompt, "prompt") {
+        Ok(value) => value,
+        Err(err) => return err.into_response(),
+    };
+    if let Err(detail) = validate_task_id(&task_id) {
+        return trace_error_response(StatusCode::BAD_REQUEST, "invalid-task-id", detail);
+    }
+    if let Some(parent_session_id) = input.parent_session_id.as_deref() {
+        if let Err(detail) = validate_session_id(parent_session_id) {
+            return trace_error_response(StatusCode::BAD_REQUEST, "invalid-session-id", detail);
+        }
+    }
+    let task_class =
+        match normalize_optional_input(input.task_class.as_deref(), "light-edit", "task-class") {
+            Ok(value) => value,
+            Err(err) => return err.into_response(),
+        };
+
+    let trace_ctx = TraceCtx::new_root(
+        "ui.task.resume",
+        format!("user resumed task from UI: {task_id}"),
+    );
+    let payload = task_resume_payload(task_id, prompt, input, task_class);
+    let response: serde_json::Value = match state
+        .nats
+        .request_traced(
+            "tool.session.resume-picker",
+            &payload,
+            &trace_ctx,
+            state.tool_timeout,
+        )
+        .await
+    {
+        Ok(response) => response,
+        Err(err) => {
+            return trace_error_response(
+                StatusCode::BAD_GATEWAY,
+                "task-resume-failed",
+                err.to_string(),
+            );
+        }
+    };
+    if let Some(error) = response.get("error") {
+        return trace_error_response(
+            StatusCode::CONFLICT,
+            "task-resume-rejected",
+            error.to_string(),
+        );
+    }
+    Json(response).into_response()
+}
+
+fn task_resume_payload(
+    task_id: String,
+    prompt: String,
+    input: TaskResumeInput,
+    task_class: String,
+) -> serde_json::Value {
+    serde_json::json!({
+        "task_id": task_id,
+        "prompt": prompt,
+        "project": input.project,
+        "harness": input.harness,
+        "parent_session_id": input.parent_session_id,
+        "task_class": task_class,
+    })
 }
 
 async fn quota_handler(
@@ -1072,37 +1532,23 @@ fn normalize_priority(value: &str) -> Result<String, ApiError> {
     }
 }
 
-fn task_id_for(description: &str, trace_ctx: &TraceCtx) -> String {
-    let date = Utc::now().format("%Y-%m-%d");
-    let slug = slugify(description);
-    let trace = trace_ctx.trace_id.to_string().to_ascii_lowercase();
-    let suffix = &trace[trace.len() - 6..];
-    format!("{date}-{slug}-{suffix}")
+fn normalize_project(value: Option<&str>) -> Result<String, ApiError> {
+    let project = normalize_optional_input(value, "blueberry", "project")?;
+    match project.as_str() {
+        "blueberry" | "jamboree" => Ok(project),
+        _ => Err(ApiError {
+            status: StatusCode::BAD_REQUEST,
+            error: "invalid-task",
+            detail: "project must be blueberry or jamboree".into(),
+        }),
+    }
 }
 
-fn slugify(input: &str) -> String {
-    let mut slug = String::new();
-    let mut last_was_dash = false;
-    for char in input.chars().flat_map(char::to_lowercase) {
-        if char.is_ascii_alphanumeric() {
-            slug.push(char);
-            last_was_dash = false;
-        } else if !last_was_dash && !slug.is_empty() {
-            slug.push('-');
-            last_was_dash = true;
-        }
-        if slug.len() >= 48 {
-            break;
-        }
-    }
-    while slug.ends_with('-') {
-        slug.pop();
-    }
-    if slug.is_empty() {
-        "task".into()
-    } else {
-        slug
-    }
+fn task_id_for(_description: &str, trace_ctx: &TraceCtx) -> String {
+    let date = Utc::now().format("%y%m%d");
+    let trace = trace_ctx.trace_id.to_string().to_ascii_lowercase();
+    let suffix = &trace[trace.len() - 8..];
+    format!("t-{date}-{suffix}")
 }
 
 fn append_current_ui_server_if_missing(services: &mut serde_json::Value) {
@@ -1283,6 +1729,22 @@ fn validate_session_id(session_id: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_task_id(task_id: &str) -> Result<(), String> {
+    if task_id.is_empty() || task_id.len() > 128 {
+        return Err("task_id must be 1-128 characters".into());
+    }
+    if task_id.contains("..") {
+        return Err("task_id may not contain '..'".into());
+    }
+    if !task_id
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
+    {
+        return Err("task_id may only contain ASCII letters, numbers, '-', and '_'".into());
+    }
+    Ok(())
+}
+
 fn load_allow_bind_addrs(jam_home: &Path) -> Result<String, UiServerError> {
     if let Ok(raw) = std::env::var("JAM_UI_ALLOW_BIND_ADDRS") {
         return Ok(raw);
@@ -1429,6 +1891,48 @@ mod tests {
     }
 
     #[test]
+    fn task_resume_payload_carries_project_harness_and_parent_session() {
+        let payload = task_resume_payload(
+            "task-resume-claude".into(),
+            "continue and create the PR".into(),
+            TaskResumeInput {
+                prompt: "continue and create the PR".into(),
+                project: Some("jamboree".into()),
+                harness: Some("claude-code".into()),
+                parent_session_id: Some("claude-code:old-session".into()),
+                task_class: Some("jamboree-self-modification".into()),
+            },
+            "jamboree-self-modification".into(),
+        );
+
+        assert_eq!(
+            payload,
+            serde_json::json!({
+                "task_id": "task-resume-claude",
+                "prompt": "continue and create the PR",
+                "project": "jamboree",
+                "harness": "claude-code",
+                "parent_session_id": "claude-code:old-session",
+                "task_class": "jamboree-self-modification",
+            })
+        );
+    }
+
+    #[test]
+    fn generated_task_ids_are_short_and_referenceable() {
+        let trace = TraceCtx::new_root("test.task", "spawn a task");
+        let task_id = task_id_for(
+            "Pick a small task and implement or fix it with a long description",
+            &trace,
+        );
+
+        assert!(task_id.starts_with("t-"));
+        assert!(task_id.len() <= 18, "{task_id}");
+        assert!(validate_task_id(&task_id).is_ok());
+        assert!(!task_id.contains("pick-a-small-task"));
+    }
+
+    #[test]
     fn bind_allowlist_accepts_localhost_and_tailscale_cgnat() {
         let allowlist = parse_bind_allowlist(DEFAULT_ALLOW_BIND_ADDRS).unwrap();
 
@@ -1534,6 +2038,17 @@ mod tests {
 
         assert_eq!(listed.as_array().unwrap().len(), 1);
         assert_eq!(listed[0]["name"], "ui-server");
+    }
+
+    #[test]
+    fn task_project_normalization_requires_explicit_supported_target() {
+        assert_eq!(normalize_project(None).unwrap(), "blueberry");
+        assert_eq!(normalize_project(Some(" jamboree ")).unwrap(), "jamboree");
+
+        let err = normalize_project(Some("autoberry")).unwrap_err();
+
+        assert_eq!(err.error, "invalid-task");
+        assert!(err.detail.contains("blueberry or jamboree"));
     }
 
     #[test]

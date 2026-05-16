@@ -33,9 +33,11 @@ const SERVICE_NAME: &str = "jam-svc-worktree";
 const SERVICE_VERSION: &str = env!("CARGO_PKG_VERSION");
 const SUBJECT_PREFIX: &str = "tool.worktree";
 const SUBJECT_PREFIX_ENV: &str = "JAM_WORKTREE_SUBJECT_PREFIX";
-const DEFAULT_REPO_PATH: &str = "/home/caleb/blueberry";
+const DEFAULT_BLUEBERRY_REPO_PATH: &str = "/home/caleb/blueberry";
+const DEFAULT_JAMBOREE_REPO_PATH: &str = "/home/caleb/jamboree";
 const DEFAULT_WORKTREE_ROOT: &str = "/home/picker/workers";
-const DEFAULT_TRUNK_BRANCH: &str = "main";
+const DEFAULT_BLUEBERRY_TRUNK_BRANCH: &str = "main";
+const DEFAULT_JAMBOREE_TRUNK_BRANCH: &str = "main";
 const DEFAULT_FETCH_STALENESS_SECS: u64 = 60;
 const TASK_ID_MAX_LEN: usize = 128;
 const DEFAULT_PICKER_USER: &str = "picker";
@@ -89,9 +91,11 @@ struct FetchCursor {
 
 #[derive(Debug, Clone)]
 struct WorktreeConfig {
-    repo_path: PathBuf,
+    blueberry_repo_path: PathBuf,
+    jamboree_repo_path: PathBuf,
     worktree_root: PathBuf,
-    trunk_branch: String,
+    blueberry_trunk_branch: String,
+    jamboree_trunk_branch: String,
     fetch_staleness: Duration,
     configure_picker_safe_directory: bool,
     picker_user: String,
@@ -100,12 +104,17 @@ struct WorktreeConfig {
 
 impl WorktreeConfig {
     fn from_env() -> Self {
-        let repo_path = std::env::var_os("JAM_BLUEBERRY_REPO")
-            .map_or_else(|| PathBuf::from(DEFAULT_REPO_PATH), PathBuf::from);
+        let blueberry_repo_path = std::env::var_os("JAM_BLUEBERRY_REPO")
+            .map_or_else(|| PathBuf::from(DEFAULT_BLUEBERRY_REPO_PATH), PathBuf::from);
+        let jamboree_repo_path = std::env::var_os("JAM_JAMBOREE_REPO")
+            .map_or_else(|| PathBuf::from(DEFAULT_JAMBOREE_REPO_PATH), PathBuf::from);
         let worktree_root = std::env::var_os("JAM_WORKTREE_ROOT")
             .map_or_else(|| PathBuf::from(DEFAULT_WORKTREE_ROOT), PathBuf::from);
-        let trunk_branch =
-            std::env::var("JAM_TRUNK_BRANCH").unwrap_or_else(|_| DEFAULT_TRUNK_BRANCH.into());
+        let blueberry_trunk_branch = std::env::var("JAM_BLUEBERRY_TRUNK_BRANCH")
+            .or_else(|_| std::env::var("JAM_TRUNK_BRANCH"))
+            .unwrap_or_else(|_| DEFAULT_BLUEBERRY_TRUNK_BRANCH.into());
+        let jamboree_trunk_branch = std::env::var("JAM_JAMBOREE_TRUNK_BRANCH")
+            .unwrap_or_else(|_| DEFAULT_JAMBOREE_TRUNK_BRANCH.into());
         let fetch_staleness = std::env::var("JAM_FETCH_STALENESS_SECS")
             .ok()
             .and_then(|raw| raw.parse().ok())
@@ -120,9 +129,11 @@ impl WorktreeConfig {
         let sudo_bin = std::env::var_os("JAM_SUDO_BIN")
             .map_or_else(|| PathBuf::from(DEFAULT_SUDO_BIN), PathBuf::from);
         Self {
-            repo_path,
+            blueberry_repo_path,
+            jamboree_repo_path,
             worktree_root,
-            trunk_branch,
+            blueberry_trunk_branch,
+            jamboree_trunk_branch,
             fetch_staleness,
             configure_picker_safe_directory,
             picker_user,
@@ -219,9 +230,9 @@ async fn run() -> Result<(), ServiceError> {
         version = %SERVICE_VERSION,
         nats = %nats_url,
         subject_prefix = %subject_prefix,
-        repo = %config.repo_path.display(),
+        blueberry_repo = %config.blueberry_repo_path.display(),
+        jamboree_repo = %config.jamboree_repo_path.display(),
         worktree_root = %config.worktree_root.display(),
-        trunk_branch = %config.trunk_branch,
         "starting",
     );
 
@@ -389,21 +400,22 @@ async fn create_worktree(
     let input = parse_input(payload)?;
     validate_task_id(&input.task_id)?;
 
+    let project = input.project.unwrap_or_else(|| "blueberry".into());
+    let project_defaults = project_defaults(&project, &state.config)?;
     let repo_path = input
         .repo_path
         .as_deref()
-        .map_or_else(|| state.config.repo_path.clone(), PathBuf::from);
+        .map_or_else(|| project_defaults.repo_path.clone(), PathBuf::from);
     let worktree_root = input
         .worktree_root
         .as_deref()
         .map_or_else(|| state.config.worktree_root.clone(), PathBuf::from);
     let trunk_branch = input
         .trunk_branch
-        .unwrap_or_else(|| state.config.trunk_branch.clone());
-    let project = input.project.unwrap_or_else(|| "blueberry".into());
+        .unwrap_or_else(|| project_defaults.trunk_branch.clone());
 
-    ensure_native_project(&project)?;
-    let repo_path = canonical_existing_dir(&repo_path, "repo-not-found")?;
+    let repo_path =
+        canonical_existing_dir(&repo_path, "repo-not-found", repo_remediation(&project))?;
     let workspace_key = WorkspaceKey::new(&input.task_id);
     let worktree_path = safe_worktree_path(&worktree_root, &workspace_key)?;
     let branch = format!("task/{}", input.task_id);
@@ -925,8 +937,16 @@ fn canonical_worktree_under_root(
             "Pass the worktree_path emitted by tool.worktree.create.",
         ));
     }
-    let canonical_root = canonical_existing_dir(worktree_root, "worktree-root-not-found")?;
-    let canonical = canonical_existing_dir(&requested, "worktree-not-found")?;
+    let canonical_root = canonical_existing_dir(
+        worktree_root,
+        "worktree-root-not-found",
+        "Verify JAM_WORKTREE_ROOT points at the Picker worktree root.",
+    )?;
+    let canonical = canonical_existing_dir(
+        &requested,
+        "worktree-not-found",
+        "Pass the worktree_path emitted by tool.worktree.create.",
+    )?;
     if !canonical.starts_with(&canonical_root) {
         return Err(WorktreeError::protocol(
             "worktree-path-escape",
@@ -968,33 +988,60 @@ async fn ensure_git_worktree_root(path: &Path) -> Result<(), WorktreeError> {
     Ok(())
 }
 
-fn canonical_existing_dir(path: &Path, kind: &'static str) -> Result<PathBuf, WorktreeError> {
+fn canonical_existing_dir(
+    path: &Path,
+    kind: &'static str,
+    remediation: &'static str,
+) -> Result<PathBuf, WorktreeError> {
     let canonical = path.canonicalize().map_err(|err| {
         WorktreeError::protocol(
             kind,
             format!("failed to canonicalize {}: {err}", path.display()),
-            "Set JAM_BLUEBERRY_REPO to the native Blueberry git checkout.",
+            remediation,
         )
     })?;
     if !canonical.is_dir() {
         return Err(WorktreeError::protocol(
             kind,
             format!("not a directory: {}", canonical.display()),
-            "Set JAM_BLUEBERRY_REPO to the native Blueberry git checkout.",
+            remediation,
         ));
     }
     Ok(canonical)
 }
 
-fn ensure_native_project(project: &str) -> Result<(), WorktreeError> {
-    if project != "blueberry" {
-        return Err(WorktreeError::protocol(
+#[derive(Debug, Clone)]
+struct ProjectDefaults {
+    repo_path: PathBuf,
+    trunk_branch: String,
+}
+
+fn project_defaults(
+    project: &str,
+    config: &WorktreeConfig,
+) -> Result<ProjectDefaults, WorktreeError> {
+    match project {
+        "blueberry" => Ok(ProjectDefaults {
+            repo_path: config.blueberry_repo_path.clone(),
+            trunk_branch: config.blueberry_trunk_branch.clone(),
+        }),
+        "jamboree" => Ok(ProjectDefaults {
+            repo_path: config.jamboree_repo_path.clone(),
+            trunk_branch: config.jamboree_trunk_branch.clone(),
+        }),
+        _ => Err(WorktreeError::protocol(
             "unsupported-project",
-            format!("only the single Blueberry project is supported, got {project}"),
-            "Run a separate Jamboree instance for another project (dec-single-project-per-instance).",
-        ));
+            format!("supported projects are blueberry and jamboree, got {project}"),
+            "Choose the explicit Blueberry or Jamboree target when creating the task.",
+        )),
     }
-    Ok(())
+}
+
+fn repo_remediation(project: &str) -> &'static str {
+    match project {
+        "jamboree" => "Set JAM_JAMBOREE_REPO to the native Jamboree git checkout.",
+        _ => "Set JAM_BLUEBERRY_REPO to the native Blueberry git checkout.",
+    }
 }
 
 fn error_response(err: WorktreeError) -> Response {
@@ -1120,9 +1167,11 @@ mod tests {
             create_mutex: Arc::new(Mutex::new(())),
             fetch_cursor: Arc::new(Mutex::new(None)),
             config: WorktreeConfig {
-                repo_path: fixture.clone.path().to_path_buf(),
+                blueberry_repo_path: fixture.clone.path().to_path_buf(),
+                jamboree_repo_path: fixture.clone.path().to_path_buf(),
                 worktree_root: fixture.worktrees.path().to_path_buf(),
-                trunk_branch: "main".into(),
+                blueberry_trunk_branch: "main".into(),
+                jamboree_trunk_branch: "main".into(),
                 fetch_staleness: Duration::from_secs(60),
                 configure_picker_safe_directory: false,
                 picker_user: DEFAULT_PICKER_USER.into(),
@@ -1155,6 +1204,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn creates_jamboree_worktree_from_explicit_project() {
+        let fixture = GitFixture::new().await;
+        let state = WorktreeState {
+            fetch_mutex: Arc::new(Mutex::new(())),
+            create_mutex: Arc::new(Mutex::new(())),
+            fetch_cursor: Arc::new(Mutex::new(None)),
+            config: WorktreeConfig {
+                blueberry_repo_path: PathBuf::from("/does/not/matter"),
+                jamboree_repo_path: fixture.clone.path().to_path_buf(),
+                worktree_root: fixture.worktrees.path().to_path_buf(),
+                blueberry_trunk_branch: "main".into(),
+                jamboree_trunk_branch: "main".into(),
+                fetch_staleness: Duration::from_secs(60),
+                configure_picker_safe_directory: false,
+                picker_user: DEFAULT_PICKER_USER.into(),
+                sudo_bin: PathBuf::from(DEFAULT_SUDO_BIN),
+            },
+        };
+        let ctx = TraceCtx::new_root("test", "jamboree worktree unit");
+
+        let created = create_worktree(
+            br#"{"task_id":"task-jamboree","project":"jamboree"}"#,
+            &state,
+            &ctx,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(created.project, "jamboree");
+        assert_eq!(created.trunk_ref, "origin/main");
+        assert!(
+            Path::new(&created.worktree_path)
+                .join("README.md")
+                .is_file()
+        );
+    }
+
+    #[tokio::test]
     async fn stale_cursor_fetches_new_origin_trunk() {
         let fixture = GitFixture::new().await;
         let state = WorktreeState {
@@ -1167,9 +1254,11 @@ mod tests {
                     .unwrap(),
             }))),
             config: WorktreeConfig {
-                repo_path: fixture.clone.path().to_path_buf(),
+                blueberry_repo_path: fixture.clone.path().to_path_buf(),
+                jamboree_repo_path: fixture.clone.path().to_path_buf(),
                 worktree_root: fixture.worktrees.path().to_path_buf(),
-                trunk_branch: "main".into(),
+                blueberry_trunk_branch: "main".into(),
+                jamboree_trunk_branch: "main".into(),
                 fetch_staleness: Duration::from_secs(60),
                 configure_picker_safe_directory: false,
                 picker_user: DEFAULT_PICKER_USER.into(),
@@ -1202,9 +1291,11 @@ mod tests {
             create_mutex: Arc::new(Mutex::new(())),
             fetch_cursor: Arc::new(Mutex::new(None)),
             config: WorktreeConfig {
-                repo_path: fixture.clone.path().to_path_buf(),
+                blueberry_repo_path: fixture.clone.path().to_path_buf(),
+                jamboree_repo_path: fixture.clone.path().to_path_buf(),
                 worktree_root: fixture.worktrees.path().to_path_buf(),
-                trunk_branch: "main".into(),
+                blueberry_trunk_branch: "main".into(),
+                jamboree_trunk_branch: "main".into(),
                 fetch_staleness: Duration::from_secs(60),
                 configure_picker_safe_directory: false,
                 picker_user: DEFAULT_PICKER_USER.into(),
@@ -1242,9 +1333,11 @@ mod tests {
             create_mutex: Arc::new(Mutex::new(())),
             fetch_cursor: Arc::new(Mutex::new(None)),
             config: WorktreeConfig {
-                repo_path: fixture.clone.path().to_path_buf(),
+                blueberry_repo_path: fixture.clone.path().to_path_buf(),
+                jamboree_repo_path: fixture.clone.path().to_path_buf(),
                 worktree_root: fixture.worktrees.path().to_path_buf(),
-                trunk_branch: "main".into(),
+                blueberry_trunk_branch: "main".into(),
+                jamboree_trunk_branch: "main".into(),
                 fetch_staleness: Duration::from_secs(60),
                 configure_picker_safe_directory: false,
                 picker_user: DEFAULT_PICKER_USER.into(),
@@ -1276,7 +1369,7 @@ mod tests {
         .await;
         run_git(
             fixture.clone.path(),
-            ["checkout", "-q", "-b", "target-conflict"],
+            ["checkout", "-q", "-b", "target-conflict", "origin/main"],
         )
         .await;
         std::fs::write(fixture.clone.path().join("README.md"), "right\n").unwrap();
@@ -1420,7 +1513,10 @@ mod tests {
             .unwrap();
         assert!(
             output.status.success(),
-            "{}",
+            "git -C {} {} failed\nstdout:\n{}\nstderr:\n{}",
+            repo.display(),
+            args.join(" "),
+            String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
     }

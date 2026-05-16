@@ -1829,6 +1829,7 @@ dependencies = [
  "chrono",
  "futures",
  "hex",
+ "jam-events",
  "jam-nats",
  "jam-tools-core",
  "jam-trace",

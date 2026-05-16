@@ -121,13 +121,23 @@ enum Command {
     /// `jam patch apply` as maestro to swap the routing manifest. Relies on
     /// the NOPASSWD `caleb -> maestro` sudoers rule from `security-setup.md`.
     Deploy {
-        /// Tool service name (e.g. observe, session). Crate must be `jam-svc-<service>`.
-        service: String,
+        /// Tool service names. Each must match a `jam-svc-<service>` crate, or
+        /// `maestro` for the Python orchestrator app. Multiple names deploy in
+        /// the given order. With `--dirty` and no names, services are inferred
+        /// from `git status` (paths under `crates/jam-svc-*/` and `maestro/`).
+        #[arg(num_args = 0..)]
+        services: Vec<String>,
+        /// Deploy every component whose source has uncommitted changes in the
+        /// working tree. Mutually exclusive with explicit service names.
+        #[arg(long, conflicts_with_all = ["version", "from"])]
+        dirty: bool,
         /// Version override. Defaults to workspace version, with `-<short-sha>-dirty`
-        /// suffix when the working tree has uncommitted changes.
+        /// suffix when the working tree has uncommitted changes. Single-service only;
+        /// not supported for `maestro`.
         #[arg(long)]
         version: Option<String>,
-        /// Pre-built binary path. Skips the `cargo build` step.
+        /// Pre-built binary path. Skips the `cargo build` step. Single-service only;
+        /// not supported for `maestro`.
         #[arg(long)]
         from: Option<PathBuf>,
         /// NATS URL forwarded to `jam patch apply`.
@@ -365,11 +375,12 @@ fn main() -> ExitCode {
         Command::Maestro { action } => run_maestro(action),
         Command::Tempyr { action } => run_tempyr(action),
         Command::Deploy {
-            service,
+            services,
+            dirty,
             version,
             from,
             nats_url,
-        } => run_deploy(service, version, from, nats_url),
+        } => run_deploy(services, dirty, version, from, nats_url),
     }
 }
 
@@ -934,9 +945,12 @@ fn run_patch_apply(
         return Err("--timeout-secs must be greater than zero".into());
     }
     let staging_path = staging_path.unwrap_or_else(|| {
+        let basename = jam_tools_core::deploy_targets::binary_name(&service)
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("jam-svc-{service}"));
         jam_home()
             .join("staging")
-            .join(format!("jam-svc-{service}-{version}"))
+            .join(format!("{basename}-{version}"))
     });
     let ctx = PatchPublishContext {
         nats_url: nats_url.unwrap_or_else(default_nats_url),
@@ -950,6 +964,104 @@ fn run_patch_apply(
         timeout: Duration::from_secs(timeout_secs),
     };
     run_async_value(publish_apply_and_wait(ctx, version, staging_path))
+}
+
+/// Publish patch.staged for a PythonApp deploy. The "staged" entity is a
+/// source directory, not a binary file — so we skip the executable+sha256
+/// checks and pass an empty sha. Patch-agent's PythonApp handler rsyncs the
+/// directory and runs `uv pip install`.
+fn run_patch_apply_python_app(
+    service: String,
+    version: String,
+    source_dir: PathBuf,
+    nats_url: Option<String>,
+    timeout_secs: u64,
+) -> Result<PatchTerminalReport, String> {
+    validate_service_arg(&service)?;
+    validate_version_arg(&version)?;
+    let ctx = PatchPublishContext {
+        nats_url: nats_url.unwrap_or_else(default_nats_url),
+        nats_token: resolve_nats_token(),
+        trace_ctx: TraceCtx::new_root(
+            "cli.patch.apply",
+            format!("apply {service} python app version {version}"),
+        ),
+        actor: format!("human:{}", current_user()),
+        service,
+        timeout: Duration::from_secs(timeout_secs),
+    };
+    run_async_value(publish_python_apply_and_wait(ctx, version, source_dir))
+}
+
+async fn publish_python_apply_and_wait(
+    ctx: PatchPublishContext,
+    version: String,
+    source_dir: PathBuf,
+) -> Result<PatchTerminalReport, String> {
+    use jam_events::generated::{
+        PatchConfirmed, PatchFailed, PatchRolledBackSuccessfully, PatchStaged,
+    };
+    if !source_dir.is_dir() {
+        return Err(format!("source path is not a dir: {}", source_dir.display()));
+    }
+    let nats = JamNats::connect(&ctx.nats_url, ctx.nats_token.clone())
+        .await
+        .map_err(|err| format!("connect {}: {err}", ctx.nats_url))?;
+    let (confirmed_sub, failed_sub, rb_success_sub) = tokio::try_join!(
+        async {
+            nats.client()
+                .subscribe(PatchConfirmed::EVENT_TYPE)
+                .await
+                .map_err(|err| format!("subscribe patch.confirmed: {err}"))
+        },
+        async {
+            nats.client()
+                .subscribe(PatchFailed::EVENT_TYPE)
+                .await
+                .map_err(|err| format!("subscribe patch.failed: {err}"))
+        },
+        async {
+            nats.client()
+                .subscribe(PatchRolledBackSuccessfully::EVENT_TYPE)
+                .await
+                .map_err(|err| format!("subscribe patch.rolled-back-successfully: {err}"))
+        },
+    )?;
+    let staged = PatchStaged {
+        service: ctx.service.clone(),
+        version: version.clone(),
+        staging_path: source_dir.display().to_string(),
+        // No binary to hash. Patch-agent's PythonApp handler doesn't check this
+        // field, but the schema requires it — send a sentinel rather than risk
+        // a future binary-flow consumer treating an empty string as zero-byte.
+        binary_sha256: "python-app-no-binary-hash".to_owned(),
+        requested_by: ctx.actor.clone(),
+        ts: Utc::now(),
+    };
+    let envelope = EventEnvelope::new(
+        PatchStaged::EVENT_TYPE,
+        PatchStaged::EVENT_SUBTYPE_VERSION,
+        0,
+        ctx.trace_ctx.trace_id.to_string(),
+        ctx.actor.clone(),
+        staged,
+    );
+    nats.publish_traced(PatchStaged::EVENT_TYPE, &envelope, &ctx.trace_ctx)
+        .await
+        .map_err(|err| format!("publish patch.staged: {err}"))?;
+    eprintln!(
+        "patch.staged published; waiting up to {}s for the agent to finish",
+        ctx.timeout.as_secs()
+    );
+    wait_for_apply_terminal(
+        confirmed_sub,
+        failed_sub,
+        rb_success_sub,
+        &ctx.trace_ctx.trace_id.to_string(),
+        &ctx.service,
+        ctx.timeout,
+    )
+    .await
 }
 
 fn run_patch_rollback(
@@ -1146,10 +1258,20 @@ async fn wait_for_apply_terminal(
                     return Err("patch.confirmed subscription closed unexpectedly".into());
                 };
                 if let Some(env) = decode_envelope::<PatchConfirmed>(&msg.payload, trace_id, service, |p| &p.service) {
+                    let detail = if env.payload.checks_run == 0 {
+                        // patch-agent emits checks_run=0 when the requested
+                        // version was already current (idempotent re-deploy).
+                        format!("version {} already current (no-op)", env.payload.version)
+                    } else {
+                        format!(
+                            "version {} confirmed by {} checks",
+                            env.payload.version, env.payload.checks_run
+                        )
+                    };
                     return Ok(PatchTerminalReport {
                         outcome: PatchOutcome::Confirmed,
                         service: env.payload.service,
-                        detail: format!("version {} confirmed by {} checks", env.payload.version, env.payload.checks_run),
+                        detail,
                     });
                 }
             }
@@ -1288,7 +1410,9 @@ fn health_ping_subject(service: &str) -> String {
 }
 
 fn health_service_name(service: &str) -> String {
-    format!("jam-svc-{service}")
+    jam_tools_core::deploy_targets::service_id(service)
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("jam-svc-{service}"))
 }
 
 fn validate_nats_subject(subject: &str) -> Result<(), String> {
@@ -2444,6 +2568,9 @@ where
 }
 
 fn run_ui(action: UiAction) -> ExitCode {
+    if let Some(exit) = delegate_ui_to_maestro_if_needed() {
+        return exit;
+    }
     let store = TokenStore::from_jam_home(jam_home());
     match action {
         UiAction::Token { user_id } => match store.issue(&user_id) {
@@ -2483,6 +2610,42 @@ fn run_ui(action: UiAction) -> ExitCode {
             }
         },
     }
+}
+
+// UI session tokens are server-side state owned by `maestro` (the ui-server
+// reads from /home/maestro/.jam/ui/session-tokens.json). When a non-maestro
+// Manager runs `jam ui …`, re-exec under maestro so writes land in the store
+// the ui-server actually reads, matching the §6.2 pattern used for the NATS
+// token. Honors explicit JAM_HOME for tests/dev that want to target a
+// specific store directly.
+fn delegate_ui_to_maestro_if_needed() -> Option<ExitCode> {
+    let username = std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        .unwrap_or_default();
+    if username == jam_tools_core::paths::MAESTRO_USER {
+        return None;
+    }
+    if std::env::var_os("JAM_HOME").is_some() {
+        return None;
+    }
+    let forwarded: Vec<String> = std::env::args().skip(1).collect();
+    let status = ProcessCommand::new("sudo")
+        .args(["-n", "-u", jam_tools_core::paths::MAESTRO_USER, "-i", "/opt/jam/bin/jam"])
+        .args(&forwarded)
+        .status();
+    Some(match status {
+        Ok(status) => status
+            .code()
+            .and_then(|code| u8::try_from(code).ok())
+            .map_or(ExitCode::from(1), ExitCode::from),
+        Err(err) => {
+            eprintln!(
+                "jam ui: re-exec under {} failed: {err}",
+                jam_tools_core::paths::MAESTRO_USER
+            );
+            ExitCode::from(1)
+        }
+    })
 }
 
 fn run_tempyr(action: TempyrAction) -> ExitCode {
@@ -3326,33 +3489,156 @@ fn current_user() -> String {
 }
 
 fn run_deploy(
-    service: String,
+    services: Vec<String>,
+    dirty: bool,
     version: Option<String>,
     from: Option<PathBuf>,
     nats_url: Option<String>,
 ) -> ExitCode {
-    match run_deploy_inner(service, version, from, nats_url) {
-        Ok(report) => {
-            println!("outcome: {}", report.outcome.as_str());
-            println!("service: {}", report.service);
-            if !report.detail.is_empty() {
-                println!("detail: {}", report.detail);
-            }
-            // For `jam deploy`, only patch.confirmed is a real success — a
-            // rollback means the new version didn't take, which is a failure
-            // from the operator's perspective even though the system is
-            // healthy.
-            if report.outcome == PatchOutcome::Confirmed {
-                ExitCode::SUCCESS
-            } else {
-                ExitCode::from(1)
-            }
-        }
+    let resolved = match resolve_deploy_targets(services, dirty) {
+        Ok(value) => value,
         Err(err) => {
             eprintln!("jam deploy failed: {err}");
-            ExitCode::from(1)
+            return ExitCode::from(1);
+        }
+    };
+
+    if resolved.is_empty() {
+        eprintln!("jam deploy: nothing to do (working tree is clean)");
+        return ExitCode::SUCCESS;
+    }
+
+    if resolved.len() > 1 && (version.is_some() || from.is_some()) {
+        eprintln!("jam deploy: --version and --from are only valid for a single service");
+        return ExitCode::from(1);
+    }
+
+    if resolved.len() > 1 {
+        eprintln!("deploying {} services in order: {}", resolved.len(), resolved.join(", "));
+    }
+
+    let mut any_failure = false;
+    for (idx, service) in resolved.iter().enumerate() {
+        if resolved.len() > 1 {
+            eprintln!("\n[{idx_plus}/{total}] {service}", idx_plus = idx + 1, total = resolved.len());
+        }
+        let result = run_deploy_inner(
+            service.clone(),
+            version.clone(),
+            from.clone(),
+            nats_url.clone(),
+        );
+        match result {
+            Ok(report) => {
+                println!("outcome: {}", report.outcome.as_str());
+                println!("service: {}", report.service);
+                if !report.detail.is_empty() {
+                    println!("detail: {}", report.detail);
+                }
+                if report.outcome != PatchOutcome::Confirmed {
+                    any_failure = true;
+                    eprintln!("aborting remaining deploys after non-confirmed outcome");
+                    break;
+                }
+            }
+            Err(err) => {
+                eprintln!("jam deploy {service} failed: {err}");
+                any_failure = true;
+                break;
+            }
         }
     }
+
+    if any_failure {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+fn resolve_deploy_targets(services: Vec<String>, dirty: bool) -> Result<Vec<String>, String> {
+    if dirty {
+        if !services.is_empty() {
+            return Err(
+                "--dirty cannot be combined with explicit service names".into(),
+            );
+        }
+        let workspace_root = resolve_workspace_root()?;
+        return discover_dirty_targets(&workspace_root);
+    }
+    if services.is_empty() {
+        return Err(
+            "specify one or more service names, or pass --dirty to infer from `git status`".into(),
+        );
+    }
+    Ok(services)
+}
+
+/// Inspect `git status --porcelain` and return the deploy targets whose source
+/// paths have uncommitted changes. Recognized prefixes:
+/// - `crates/jam-svc-<name>/` → `<name>`
+/// - `maestro/`               → `maestro`
+/// Targets are returned in a stable order: rust services alphabetically, then
+/// `maestro` last (the maestro restart is the most observable change).
+fn discover_dirty_targets(workspace_root: &Path) -> Result<Vec<String>, String> {
+    let output = ProcessCommand::new("git")
+        .args(["status", "--porcelain", "-z"])
+        .current_dir(workspace_root)
+        .output()
+        .map_err(|err| format!("run git status: {err}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git status --porcelain failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let raw = String::from_utf8(output.stdout)
+        .map_err(|err| format!("git status returned invalid utf-8: {err}"))?;
+
+    // Index every registered deploy target by its `crates/<crate_name>/` prefix
+    // so the matcher is data-driven: adding a new target to the registry makes
+    // `--dirty` pick it up automatically. BTreeMap ordering is stable but not
+    // semantically meaningful; we re-sort at the end.
+    let prefix_to_short: std::collections::BTreeMap<String, &'static str> =
+        jam_tools_core::deploy_targets::DEPLOY_TARGETS
+            .iter()
+            .map(|t| (format!("crates/{}/", t.crate_name), t.short_name))
+            .collect();
+
+    let mut services = std::collections::BTreeSet::new();
+    let mut include_maestro = false;
+    for entry in raw.split('\0') {
+        if entry.len() < 4 {
+            continue;
+        }
+        // Porcelain format: "XY <path>" — XY is 2 status chars + space.
+        let path = &entry[3..];
+        let mut matched = false;
+        for (prefix, short_name) in &prefix_to_short {
+            if path.starts_with(prefix.as_str()) {
+                services.insert((*short_name).to_owned());
+                matched = true;
+                break;
+            }
+        }
+        if matched {
+            continue;
+        }
+        if path.starts_with("maestro/") {
+            // Only treat as deploy-affecting if it's under src/, pyproject.toml,
+            // or uv.lock — test changes alone don't need a redeploy.
+            let rest = &path["maestro/".len()..];
+            if rest.starts_with("src/") || rest == "pyproject.toml" || rest == "uv.lock" {
+                include_maestro = true;
+            }
+        }
+    }
+
+    let mut targets: Vec<String> = services.into_iter().collect();
+    if include_maestro {
+        targets.push("maestro".to_owned());
+    }
+    Ok(targets)
 }
 
 fn run_deploy_inner(
@@ -3362,48 +3648,86 @@ fn run_deploy_inner(
     nats_url: Option<String>,
 ) -> Result<PatchTerminalReport, String> {
     validate_service_arg(&service)?;
-
     let workspace_root = resolve_workspace_root()?;
+    let target = jam_tools_core::deploy_targets::find(&service).ok_or_else(|| {
+        format!(
+            "unknown deploy target `{service}` — add it to \
+             crates/jam-tools-core/src/deploy_targets.rs"
+        )
+    })?;
 
-    let source = if let Some(path) = from {
-        let path = if path.is_absolute() {
-            path
-        } else {
-            std::env::current_dir()
-                .map_err(|err| format!("read cwd: {err}"))?
-                .join(path)
-        };
-        if !path.is_file() {
-            return Err(format!("--from path is not a file: {}", path.display()));
+    // For PythonApp the "staged" thing is a source directory; for everything
+    // else it's a cargo-built binary. Branch on what to stage.
+    use jam_tools_core::deploy_targets::DeployStrategy as Strategy;
+    match target.strategy {
+        Strategy::AtomicSwap
+        | Strategy::StopReplaceRestart { .. }
+        | Strategy::CanonicalBinary { .. } => {
+            let source = if let Some(path) = from {
+                let path = if path.is_absolute() {
+                    path
+                } else {
+                    std::env::current_dir()
+                        .map_err(|err| format!("read cwd: {err}"))?
+                        .join(path)
+                };
+                if !path.is_file() {
+                    return Err(format!("--from path is not a file: {}", path.display()));
+                }
+                path
+            } else {
+                cargo_build_release_crate(&workspace_root, target.crate_name)?;
+                workspace_root
+                    .join("target")
+                    .join("release")
+                    .join(target.binary_name)
+            };
+            if !source.is_file() {
+                return Err(format!(
+                    "expected service binary at {} after build",
+                    source.display()
+                ));
+            }
+            let version = match version_override {
+                Some(value) => {
+                    validate_version_arg(&value)?;
+                    value
+                }
+                None => compute_deploy_version(&workspace_root, Some(&source))?,
+            };
+            eprintln!(
+                "publishing patch.staged for {service} {version} from {}",
+                source.display()
+            );
+            run_patch_apply(service, version, Some(source), nats_url, 60)
         }
-        path
-    } else {
-        cargo_build_release_service(&workspace_root, &service)?;
-        workspace_root
-            .join("target")
-            .join("release")
-            .join(format!("jam-svc-{service}"))
-    };
-    if !source.is_file() {
-        return Err(format!(
-            "expected service binary at {} after build",
-            source.display()
-        ));
+        Strategy::PythonApp { .. } => {
+            if from.is_some() {
+                return Err(
+                    "--from is not supported for PythonApp targets (no prebuilt artifact)".into(),
+                );
+            }
+            let source_dir = workspace_root.join("maestro");
+            if !source_dir.join("pyproject.toml").is_file() {
+                return Err(format!(
+                    "expected Python app source at {} (missing pyproject.toml)",
+                    source_dir.display()
+                ));
+            }
+            let version = match version_override {
+                Some(value) => {
+                    validate_version_arg(&value)?;
+                    value
+                }
+                None => compute_deploy_version(&workspace_root, None)?,
+            };
+            eprintln!(
+                "publishing patch.staged for {service} {version} from {}",
+                source_dir.display()
+            );
+            run_patch_apply_python_app(service, version, source_dir, nats_url, 90)
+        }
     }
-
-    let version = match version_override {
-        Some(value) => {
-            validate_version_arg(&value)?;
-            value
-        }
-        None => compute_deploy_version(&workspace_root)?,
-    };
-
-    eprintln!(
-        "publishing patch.staged for {service} {version} from {}",
-        source.display()
-    );
-    run_patch_apply(service, version, Some(source), nats_url, 60)
 }
 
 fn resolve_workspace_root() -> Result<PathBuf, String> {
@@ -3427,12 +3751,11 @@ fn resolve_workspace_root() -> Result<PathBuf, String> {
         .ok_or_else(|| format!("cargo locate-project returned a root path: {}", path.trim()))
 }
 
-fn cargo_build_release_service(workspace_root: &Path, service: &str) -> Result<(), String> {
-    let crate_name = format!("jam-svc-{service}");
+fn cargo_build_release_crate(workspace_root: &Path, crate_name: &str) -> Result<(), String> {
     eprintln!("building {crate_name} (cargo build --release)");
     let status = ProcessCommand::new("cargo")
         .args(["build", "--release", "-p"])
-        .arg(&crate_name)
+        .arg(crate_name)
         .current_dir(workspace_root)
         .status()
         .map_err(|err| format!("run cargo build -p {crate_name}: {err}"))?;
@@ -3442,7 +3765,17 @@ fn cargo_build_release_service(workspace_root: &Path, service: &str) -> Result<(
     Ok(())
 }
 
-fn compute_deploy_version(workspace_root: &Path) -> Result<String, String> {
+// Note: maestro / jam-cli deploys used to run synchronously in the CLI via
+// helpers like `run_deploy_maestro`, `run_as_maestro`, `wait_for_process_running`,
+// `find_uv_bin`, and `parse_process_status`. That logic now lives in
+// `jam-patch-agent`'s PythonApp / CanonicalBinary strategies, so the CLI just
+// publishes patch.staged and waits like every other target — see
+// `run_deploy_inner`'s strategy match.
+
+fn compute_deploy_version(
+    workspace_root: &Path,
+    binary_path: Option<&Path>,
+) -> Result<String, String> {
     let cargo_toml = workspace_root.join("Cargo.toml");
     let raw = fs::read_to_string(&cargo_toml)
         .map_err(|err| format!("read {}: {err}", cargo_toml.display()))?;
@@ -3453,10 +3786,22 @@ fn compute_deploy_version(workspace_root: &Path) -> Result<String, String> {
         )
     })?;
     if git_workspace_clean(workspace_root)? {
-        Ok(base)
+        return Ok(base);
+    }
+    let sha = git_short_sha(workspace_root)?;
+    // When the working tree is dirty, include a short hash of the binary's
+    // contents so different builds get distinct versions. Without this, two
+    // back-to-back deploys produce the same `0.1.0-<sha>-dirty` string and the
+    // routing manifest rejects the second as "already current". The content
+    // hash also makes idempotent rebuilds (cargo cached, no work done)
+    // genuinely idempotent: same input → same version → no-op.
+    let base_dirty = format!("{base}-{sha}-dirty");
+    if let Some(path) = binary_path {
+        let content_hash = sha256_file_hex(path)?;
+        let short = &content_hash[..content_hash.len().min(7)];
+        Ok(format!("{base_dirty}-{short}"))
     } else {
-        let sha = git_short_sha(workspace_root)?;
-        Ok(format!("{base}-{sha}-dirty"))
+        Ok(base_dirty)
     }
 }
 
@@ -3518,6 +3863,90 @@ mod tests {
     use super::*;
     use chrono::DateTime;
     use tempfile::TempDir;
+
+    fn write_dirty_repo(files: &[&str]) -> TempDir {
+        let tmp = TempDir::new().unwrap();
+        let repo = tmp.path();
+        for (args, expect) in [
+            (vec!["init", "-q", "-b", "main"], "git init"),
+            (vec!["config", "user.email", "test@example.com"], "git config email"),
+            (vec!["config", "user.name", "test"], "git config name"),
+            (vec!["config", "commit.gpgsign", "false"], "git config gpgsign"),
+        ] {
+            let status = ProcessCommand::new("git")
+                .args(&args)
+                .current_dir(repo)
+                .status()
+                .unwrap();
+            assert!(status.success(), "{expect} failed");
+        }
+        // Stage and commit a baseline so files show as " M" (modified) rather
+        // than "??" (untracked) — discover_dirty_targets is intended for the
+        // tracked-modification case.
+        for relpath in files {
+            let path = repo.join(relpath);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, b"base\n").unwrap();
+        }
+        ProcessCommand::new("git").args(["add", "-A"]).current_dir(repo).status().unwrap();
+        ProcessCommand::new("git")
+            .args(["commit", "-q", "-m", "baseline"])
+            .current_dir(repo)
+            .status()
+            .unwrap();
+        for relpath in files {
+            std::fs::write(repo.join(relpath), b"modified\n").unwrap();
+        }
+        tmp
+    }
+
+    #[test]
+    fn discover_dirty_targets_collects_rust_services_and_maestro() {
+        let tmp = write_dirty_repo(&[
+            "crates/jam-svc-worktree/src/main.rs",
+            "crates/jam-svc-session/src/main.rs",
+            "maestro/src/jam_maestro/dispatch.py",
+            "docs/proposal-v5.md", // ignored
+        ]);
+        let targets = discover_dirty_targets(tmp.path()).unwrap();
+        assert_eq!(targets, vec!["session", "worktree", "maestro"]);
+    }
+
+    #[test]
+    fn discover_dirty_targets_ignores_maestro_test_only_changes() {
+        let tmp = write_dirty_repo(&[
+            "maestro/tests/unit/test_dispatch.py",
+            "maestro/README.md",
+        ]);
+        let targets = discover_dirty_targets(tmp.path()).unwrap();
+        assert!(targets.is_empty(), "got {targets:?}");
+    }
+
+    #[test]
+    fn discover_dirty_targets_includes_maestro_for_pyproject_or_uv_lock() {
+        let tmp = write_dirty_repo(&["maestro/pyproject.toml"]);
+        assert_eq!(discover_dirty_targets(tmp.path()).unwrap(), vec!["maestro"]);
+        let tmp = write_dirty_repo(&["maestro/uv.lock"]);
+        assert_eq!(discover_dirty_targets(tmp.path()).unwrap(), vec!["maestro"]);
+    }
+
+    #[test]
+    fn resolve_deploy_targets_rejects_dirty_with_explicit_names() {
+        let err = resolve_deploy_targets(vec!["worktree".into()], true).unwrap_err();
+        assert!(err.contains("--dirty cannot be combined"));
+    }
+
+    #[test]
+    fn resolve_deploy_targets_rejects_empty_without_dirty() {
+        let err = resolve_deploy_targets(vec![], false).unwrap_err();
+        assert!(err.contains("specify one or more service names"));
+    }
+
+    #[test]
+    fn resolve_deploy_targets_passes_explicit_services_through() {
+        let targets = resolve_deploy_targets(vec!["worktree".into(), "maestro".into()], false).unwrap();
+        assert_eq!(targets, vec!["worktree", "maestro"]);
+    }
 
     #[test]
     fn parse_workspace_version_reads_quoted_value() {

@@ -326,15 +326,27 @@ pub async fn handle_picker_exited(nats: &JamNats, envelope: &JournalEnvelope, ct
                 Ok(pr_ref) => info!(task = %event.task_id, pr_ref = %pr_ref, "open-pr succeeded"),
                 Err(err) => {
                     warn!(task = %event.task_id, error = %err, "open-pr request failed");
-                    publish_continuation(
-                        nats,
-                        &event,
-                        "open-pr-failed",
-                        &err,
-                        &draft_open_pr_failure_prompt(&event, &err),
-                        ctx,
-                    )
-                    .await;
+                    if is_unrecoverable_remote_failure(&err) {
+                        // The Picker can't do anything about a missing
+                        // remote / auth failure — re-spawning would just
+                        // burn an attempt repeating the same work.
+                        // Leave the task at picker-completed and surface
+                        // the error in the journal for human triage.
+                        warn!(
+                            task = %event.task_id,
+                            "open-pr failed with an unrecoverable remote error; not re-spawning picker",
+                        );
+                    } else {
+                        publish_continuation(
+                            nats,
+                            &event,
+                            "open-pr-failed",
+                            &err,
+                            &draft_open_pr_failure_prompt(&event, &err),
+                            ctx,
+                        )
+                        .await;
+                    }
                 }
             }
         }
@@ -396,19 +408,29 @@ fn run_pre_checks(event: &ExitedEvent) -> CheckOutcome {
         "main".to_string(),
         "master".to_string(),
     ];
-    let mut resolved_base: Option<String> = None;
+    // `-c safe.directory=*` bypasses git's "dubious ownership" guard for
+    // this single invocation. The post-picker handler runs as root and
+    // sudos to picker, but sudo's env_reset under `Defaults use_pty` leaves
+    // git unable to load picker's own gitconfig; configuring the policy
+    // per-command instead is portable.
+    //
+    // Probe each candidate trunk ref independently and collect ALL that
+    // resolve. The first hit becomes `base_ref` for the ahead-count below;
+    // the rest are passed as additional `--not` args so commits that
+    // already appear on any known trunk are excluded from the count.
+    let mut resolved_refs: Vec<String> = Vec::new();
     for candidate in &candidates {
         let cmd = format!(
-            "cd {wt} && git rev-parse --verify {ref_} >/dev/null 2>&1 && echo {ref_}",
+            "cd {wt} && git -c safe.directory='*' rev-parse --verify {ref_} >/dev/null && echo {ref_}",
             wt = shell_quote(&wt),
             ref_ = shell_quote(candidate),
         );
         let out = sudo_picker_check(&cmd);
-        if !out.trim().is_empty() {
-            resolved_base = Some(candidate.clone());
-            break;
+        if !out.trim().is_empty() && !resolved_refs.contains(candidate) {
+            resolved_refs.push(candidate.clone());
         }
     }
+    let resolved_base = resolved_refs.first().cloned();
     let Some(base_ref) = resolved_base else {
         return CheckOutcome::NeedsContinuation {
             reason: "no-trunk-ref",
@@ -418,23 +440,38 @@ fn run_pre_checks(event: &ExitedEvent) -> CheckOutcome {
             ),
         };
     };
+    // Count commits on the picker branch that don't already exist on any
+    // *resolvable* trunk ref. Excluding refs that don't exist locally
+    // (e.g. `master` on a main-only repo) would make `git rev-list` fatal
+    // with "ambiguous argument"; we built `resolved_refs` to only contain
+    // refs that probe-verified above.
+    let not_args: String = resolved_refs
+        .iter()
+        .filter(|r| *r != &base_ref)
+        .map(|r| format!(" --not {}", shell_quote(r)))
+        .collect();
     let ahead_cmd = format!(
-        "cd {wt} && git rev-list --count {base_ref}..HEAD 2>/dev/null",
+        "cd {wt} && git -c safe.directory='*' rev-list --count HEAD --not {base_ref}{others} 2>/dev/null",
         wt = shell_quote(&wt),
         base_ref = shell_quote(&base_ref),
+        others = not_args,
     );
     let ahead = sudo_picker_check(&ahead_cmd);
     let ahead_count = ahead.trim().parse::<u32>().unwrap_or(0);
     if ahead_count == 0 {
         return CheckOutcome::NeedsContinuation {
             reason: "no-commits",
-            detail: format!("branch {} has no commits ahead of {}", event.branch, base_ref),
+            detail: format!(
+                "branch {} has no commits beyond resolvable trunk refs ({})",
+                event.branch,
+                resolved_refs.join(", ")
+            ),
         };
     }
 
     // 3. Working tree clean (ignoring .jam/, which is a runtime artifact dir).
     let status_cmd = format!(
-        "cd {wt} && git status --porcelain --untracked-files=normal 2>/dev/null \
+        "cd {wt} && git -c safe.directory='*' status --porcelain --untracked-files=normal 2>/dev/null \
          | awk '$0 !~ /(^.. \\.jam\\/| \\.jam$)/' | head -c 4096",
         wt = shell_quote(&wt),
     );
@@ -489,12 +526,44 @@ fn sudo_picker_check(bash_cmd: &str) -> String {
     let sudo_bin = std::env::var(SUDO_BIN_ENV).unwrap_or_else(|_| DEFAULT_SUDO_BIN.into());
     let picker_user =
         std::env::var(PICKER_USER_ENV).unwrap_or_else(|_| DEFAULT_PICKER_USER.into());
-    let mut command = Command::new(sudo_bin);
-    command.args(["-n", "-u", &picker_user, "bash", "-c", bash_cmd]);
+    let mut command = Command::new(&sudo_bin);
+    // `-i` simulates a full login: sets HOME to the target user's home and
+    // runs through the target user's shell init. We need this so git reads
+    // picker's `~/.gitconfig` (with its `safe.directory` allowlist for
+    // `/home/picker/workers/*`). The explicit `HOME=` belt is for sudoers
+    // configs where `env_reset` doesn't clear it; without it git was using
+    // root's gitconfig and refusing on "dubious ownership".
+    let env_home = format!("HOME=/home/{picker_user}");
+    let env_user = format!("USER={picker_user}");
+    command.args([
+        "-n",
+        "-i",
+        "-u",
+        &picker_user,
+        "env",
+        &env_home,
+        &env_user,
+        "bash",
+        "-c",
+        bash_cmd,
+    ]);
     match command.output() {
-        Ok(output) => String::from_utf8_lossy(&output.stdout).into_owned(),
+        Ok(output) => {
+            if !output.status.success() {
+                warn!(
+                    sudo = %sudo_bin,
+                    user = %picker_user,
+                    cmd = %bash_cmd,
+                    exit = ?output.status.code(),
+                    stdout = %String::from_utf8_lossy(&output.stdout).trim(),
+                    stderr = %String::from_utf8_lossy(&output.stderr).trim(),
+                    "sudo picker check exited non-zero",
+                );
+            }
+            String::from_utf8_lossy(&output.stdout).into_owned()
+        }
         Err(err) => {
-            debug!("sudo picker check failed: {err}");
+            debug!("sudo picker check failed to launch: {err}");
             String::new()
         }
     }
@@ -578,6 +647,27 @@ async fn publish_continuation(
     }
 }
 
+/// Detect open-pr failures that no amount of picker work can fix: the git
+/// remote is missing, returning 404, or rejecting auth. Re-spawning the
+/// Picker for these only burns compute repeating the same successful build
+/// before hitting the same wall. Distinguished from transient errors
+/// (timeouts, GitHub 5xx) which legitimately benefit from a retry.
+fn is_unrecoverable_remote_failure(err: &str) -> bool {
+    let lower = err.to_ascii_lowercase();
+    [
+        "repository not found",
+        "could not read from remote repository",
+        "remote: not found",
+        "fatal: 'origin' does not appear to be a git repository",
+        "permission denied (publickey)",
+        "authentication failed",
+        "ssh: could not resolve hostname",
+        "host key verification failed",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
 /// Count prior `picker.continuation-needed` events recorded today for this
 /// task. Used to populate the `attempt` field so the cap actually fires.
 /// Returns 0 if the journal file isn't readable yet.
@@ -645,6 +735,31 @@ fn truncate(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn is_unrecoverable_recognizes_404_and_auth() {
+        assert!(is_unrecoverable_remote_failure(
+            "remote: Repository not found.\nfatal: repository 'https://github.com/cleak/jamboree.git/' not found"
+        ));
+        assert!(is_unrecoverable_remote_failure(
+            "Could not read from remote repository.\nPlease make sure you have the correct access rights"
+        ));
+        assert!(is_unrecoverable_remote_failure(
+            "git -C /home/x fetch origin: fatal: 'origin' does not appear to be a git repository"
+        ));
+        assert!(is_unrecoverable_remote_failure(
+            "Permission denied (publickey).\nfatal: Could not read from remote repository."
+        ));
+        assert!(is_unrecoverable_remote_failure("Authentication failed for https://github.com/foo"));
+    }
+
+    #[test]
+    fn is_unrecoverable_lets_transient_errors_retry() {
+        assert!(!is_unrecoverable_remote_failure("nats request: timed out"));
+        assert!(!is_unrecoverable_remote_failure("HTTP 502 from github.com"));
+        assert!(!is_unrecoverable_remote_failure("connection reset"));
+        assert!(!is_unrecoverable_remote_failure(""));
+    }
 
     #[test]
     fn shell_quote_escapes_single_quotes() {

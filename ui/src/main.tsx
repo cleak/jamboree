@@ -95,7 +95,7 @@ type TraceReplayState =
 
 type MessageMode = "queue" | "interrupt" | "full-stop";
 type TaskTarget = "blueberry" | "jamboree";
-type ThemeMode = "light" | "dark";
+type ThemeMode = "light" | "dark" | "system";
 
 type MessageResponse = {
   message_id: string;
@@ -295,6 +295,29 @@ function App() {
 
   createEffect(() => {
     localStorage.setItem("jam.ui.theme", theme());
+  });
+
+  // Re-render when the OS color scheme changes, but only while we're in
+  // `system` mode. `effective` is read in the JSX below, so updating a
+  // signal whenever the media query flips is the simplest way to pick up
+  // OS toggles without a full reload.
+  const [systemDark, setSystemDark] = createSignal(
+    typeof window !== "undefined" && window.matchMedia
+      ? window.matchMedia("(prefers-color-scheme: dark)").matches
+      : false
+  );
+  createEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = (event: MediaQueryListEvent) => setSystemDark(event.matches);
+    mq.addEventListener("change", onChange);
+    onCleanup(() => mq.removeEventListener("change", onChange));
+  });
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const effective = createMemo<"light" | "dark">(() => {
+    const mode = theme();
+    if (mode === "light" || mode === "dark") return mode;
+    return systemDark() ? "dark" : "light";
   });
 
   createEffect(() => {
@@ -545,7 +568,11 @@ function App() {
         />
       }
     >
-    <main class={`min-h-screen bg-[#f7f7f8] text-[#171717] theme-${theme()}`} data-theme={theme()}>
+    <main
+      class={`min-h-screen bg-[#f7f7f8] text-[#171717] theme-${effective()}`}
+      data-theme={effective()}
+      data-theme-mode={theme()}
+    >
       <div class="grid min-h-screen grid-cols-1 lg:grid-cols-[240px_minmax(0,1fr)]">
         <aside class="min-w-0 border-b border-[#e5e5e5] bg-[#f4f4f5] px-3 py-3 lg:border-b-0 lg:border-r">
           <div class="mb-4 flex items-center justify-between gap-3 px-2">
@@ -597,14 +624,7 @@ function App() {
                 <p class="text-sm text-[#666666]">Blueberry and Jamboree work queues</p>
               </div>
               <div class="flex items-center gap-2">
-                <button
-                  class="rounded-full border border-[#d7d7d7] bg-white px-3 py-1.5 text-sm hover:bg-[#eeeeef]"
-                  type="button"
-                  onClick={() => setTheme(theme() === "dark" ? "light" : "dark")}
-                  title="Toggle dark mode"
-                >
-                  {theme() === "dark" ? "Light" : "Dark"}
-                </button>
+                <ThemeToggle mode={theme()} effective={effective()} onChange={setTheme} />
                 <div class="rounded-full border border-[#d7d7d7] bg-white px-3 py-1.5 text-sm">
                   <span class="mr-2 inline-block h-2 w-2 rounded-full bg-[#19a463]" />
                   {status()}
@@ -2298,6 +2318,149 @@ function SettingsView(props: { tokenSaved: boolean; subject: string }) {
         <KeyValue label="Notification subject" value="notify.human" />
       </dl>
     </Panel>
+  );
+}
+
+/**
+ * Three-state theme picker (system / light / dark) with sun & moon icons.
+ * The popover/segmented control pattern users expect from modern dashboards;
+ * a single click cycles to the next mode, and the menu lets users pick
+ * `system` to auto-follow the OS pref.
+ */
+function ThemeToggle(props: {
+  mode: ThemeMode;
+  effective: "light" | "dark";
+  onChange: (mode: ThemeMode) => void;
+}) {
+  const [open, setOpen] = createSignal(false);
+  let containerEl: HTMLDivElement | undefined;
+
+  const closeOnOutsideClick = (event: MouseEvent) => {
+    if (!containerEl) return;
+    if (containerEl.contains(event.target as Node)) return;
+    setOpen(false);
+  };
+  createEffect(() => {
+    if (!open()) return;
+    document.addEventListener("click", closeOnOutsideClick);
+    onCleanup(() => document.removeEventListener("click", closeOnOutsideClick));
+  });
+
+  const label = () =>
+    props.mode === "system"
+      ? `Theme: system (${props.effective})`
+      : `Theme: ${props.mode}`;
+
+  return (
+    <div class="relative" ref={(el) => (containerEl = el)}>
+      <button
+        type="button"
+        class="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#d7d7d7] bg-white text-[#171717] transition-colors hover:bg-[#eeeeef] focus:outline-none focus:ring-2 focus:ring-[#a3a3a3] focus:ring-offset-1 dark:border-[#3a3a3a] dark:bg-[#1a1a1a] dark:text-[#f5f5f5] dark:hover:bg-[#262626]"
+        aria-label={label()}
+        aria-haspopup="menu"
+        aria-expanded={open()}
+        title={label()}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <Show when={props.effective === "dark"} fallback={<SunIcon />}>
+          <MoonIcon />
+        </Show>
+      </button>
+      <Show when={open()}>
+        <div
+          role="menu"
+          class="absolute right-0 z-20 mt-2 w-40 overflow-hidden rounded-lg border border-[#e5e5e5] bg-white text-sm shadow-lg dark:border-[#3a3a3a] dark:bg-[#1a1a1a]"
+        >
+          <For each={["system", "light", "dark"] as const}>
+            {(option) => (
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={props.mode === option}
+                class="flex w-full items-center gap-2 px-3 py-2 text-left text-[#171717] hover:bg-[#f1f4ec] dark:text-[#f5f5f5] dark:hover:bg-[#262626]"
+                classList={{ "font-medium": props.mode === option }}
+                onClick={() => {
+                  props.onChange(option);
+                  setOpen(false);
+                }}
+              >
+                <span class="inline-flex h-4 w-4 items-center justify-center">
+                  {option === "light" ? (
+                    <SunIcon class="h-4 w-4" />
+                  ) : option === "dark" ? (
+                    <MoonIcon class="h-4 w-4" />
+                  ) : (
+                    <SystemIcon class="h-4 w-4" />
+                  )}
+                </span>
+                <span class="flex-1 capitalize">{option}</span>
+                <Show when={props.mode === option}>
+                  <span aria-hidden="true" class="text-[#5b6558]">
+                    ✓
+                  </span>
+                </Show>
+              </button>
+            )}
+          </For>
+        </div>
+      </Show>
+    </div>
+  );
+}
+
+function SunIcon(props: { class?: string } = {}) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      class={props.class ?? "h-4 w-4"}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+    </svg>
+  );
+}
+
+function MoonIcon(props: { class?: string } = {}) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      class={props.class ?? "h-4 w-4"}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+    </svg>
+  );
+}
+
+function SystemIcon(props: { class?: string } = {}) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      class={props.class ?? "h-4 w-4"}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="3" y="4" width="18" height="12" rx="2" />
+      <path d="M8 20h8M12 16v4" />
+    </svg>
   );
 }
 
@@ -4580,7 +4743,23 @@ function formatUnknown(value: unknown) {
 }
 
 function loadTheme(): ThemeMode {
-  return localStorage.getItem("jam.ui.theme") === "dark" ? "dark" : "light";
+  const stored = localStorage.getItem("jam.ui.theme");
+  if (stored === "dark" || stored === "light" || stored === "system") {
+    return stored;
+  }
+  // Default to following the OS — same behavior as the OS-level system
+  // pref, no surprise toggle on first visit.
+  return "system";
+}
+
+/**
+ * Resolve a `ThemeMode` to the actual `"light"` / `"dark"` palette to apply.
+ * `system` defers to `prefers-color-scheme`; everything else is identity.
+ */
+function effectiveTheme(mode: ThemeMode): "light" | "dark" {
+  if (mode === "light" || mode === "dark") return mode;
+  if (typeof window === "undefined" || !window.matchMedia) return "light";
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
 function parseDate(value: string | undefined) {

@@ -205,6 +205,19 @@ type CreateTaskState =
   | { status: "created"; taskId: string; traceId: string }
   | { status: "error"; message: string };
 
+type DeployTargetRow = {
+  shortName: string;
+  crateName: string;
+  binaryName: string;
+  strategy: string;
+};
+
+type DeployState =
+  | { status: "idle" }
+  | { status: "deploying"; service: string }
+  | { status: "ok"; service: string; version: string; detail: string; traceId: string }
+  | { status: "error"; service: string; message: string };
+
 type TimelineItem = {
   key: string;
   status: string;
@@ -233,6 +246,7 @@ type RouteData = {
   token: string;
   createTaskState: CreateTaskState;
   onCreateTaskState: (state: CreateTaskState) => void;
+  deployTargets: DeployTargetRow[];
 };
 
 const navItems = [
@@ -262,6 +276,7 @@ function App() {
   const [quotaError, setQuotaError] = createSignal("");
   const [quotaRefreshedAt, setQuotaRefreshedAt] = createSignal<Date | null>(null);
   const [createTaskState, setCreateTaskState] = createSignal<CreateTaskState>({ status: "idle" });
+  const [deployTargets, setDeployTargets] = createSignal<DeployTargetRow[]>([]);
   const [drawerOpen, setDrawerOpen] = createSignal(false);
   const [lastConnectedAt, setLastConnectedAt] = createSignal<Date | null>(null);
   const [traceReplay, setTraceReplay] = createSignal<TraceReplayState>({ status: "idle" });
@@ -302,6 +317,25 @@ function App() {
     load();
     const timer = window.setInterval(load, 5000);
     onCleanup(() => window.clearInterval(timer));
+  });
+
+  createEffect(() => {
+    const nextToken = connectedToken();
+    if (nextToken.length === 0) {
+      setDeployTargets([]);
+      return;
+    }
+    // Deploy targets come from a registry constant — they only change on
+    // jam-ui-server redeploy, so a single fetch on token connect is fine.
+    fetch(deployTargetsUrl(nextToken))
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(await response.text());
+        }
+        return response.json() as Promise<unknown[]>;
+      })
+      .then((items) => setDeployTargets(items.map(parseDeployTargetRow)))
+      .catch(() => setDeployTargets([]));
   });
 
   createEffect(() => {
@@ -599,6 +633,7 @@ function App() {
               token={token()}
               createTaskState={createTaskState()}
               onCreateTaskState={setCreateTaskState}
+              deployTargets={deployTargets()}
             />
           </div>
         </section>
@@ -782,6 +817,7 @@ function DashboardView(props: {
   token: string;
   createTaskState: CreateTaskState;
   onCreateTaskState: (state: CreateTaskState) => void;
+  deployTargets: DeployTargetRow[];
 }) {
   const runningServices = createMemo(() => props.services.filter((service) => service.running));
   const disabledServices = createMemo(() =>
@@ -856,6 +892,7 @@ function DashboardView(props: {
           <Panel title="Services">
             <ServiceTable rows={props.services} compact />
           </Panel>
+          <DeployPanel token={props.token} targets={props.deployTargets} />
         </div>
 
         <div class="min-w-0 space-y-5">
@@ -1007,6 +1044,140 @@ function TaskComposer(props: {
             {props.state.status === "submitting" ? "Adding" : "Add Task"}
           </button>
         </div>
+      </div>
+    </Panel>
+  );
+}
+
+function DeployPanel(props: { token: string; targets: DeployTargetRow[] }) {
+  const [state, setState] = createSignal<DeployState>({ status: "idle" });
+  const sorted = createMemo(() => {
+    // Same order as the registry returns. No additional sort — that order is
+    // already chosen (svc services, singletons, maestro, cli).
+    return props.targets;
+  });
+  const deploy = async (service: string) => {
+    if (!props.token.trim()) {
+      setState({ status: "error", service, message: "token required" });
+      return;
+    }
+    setState({ status: "deploying", service });
+    try {
+      const url = new URL("/api/deploy", window.location.href);
+      url.searchParams.set("token", props.token.trim());
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ service })
+      });
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      const result = (await response.json()) as {
+        service?: string;
+        version?: string;
+        outcome?: string;
+        detail?: string;
+        trace_id?: string;
+      };
+      if (result.outcome !== "confirmed") {
+        throw new Error(result.detail ?? `outcome=${result.outcome ?? "unknown"}`);
+      }
+      setState({
+        status: "ok",
+        service: result.service ?? service,
+        version: result.version ?? "-",
+        detail: result.detail ?? "",
+        traceId: result.trace_id ?? "-"
+      });
+    } catch (err: unknown) {
+      setState({
+        status: "error",
+        service,
+        message: err instanceof Error ? err.message : String(err)
+      });
+    }
+  };
+  return (
+    <Panel title="Deploy">
+      <div class="grid gap-3 p-4">
+        <p class="text-xs text-[#62665e]">
+          Publishes <code>patch.staged</code> for the selected component. Build the
+          binary first (<code>cargo build --release -p &lt;crate&gt;</code> on the
+          monorepo host) — the registered staging path is read by the server.
+        </p>
+        <Show
+          when={sorted().length > 0}
+          fallback={<EmptyState text="No deploy targets visible (token expired?)." />}
+        >
+          <div class="max-w-full overflow-x-auto">
+            <table class="w-full min-w-[420px] border-collapse text-left text-sm">
+              <thead class="border-b border-[#d7ddce] text-xs uppercase text-[#5b6558]">
+                <tr>
+                  <th class="px-3 py-2 font-medium">Service</th>
+                  <th class="px-3 py-2 font-medium">Strategy</th>
+                  <th class="px-3 py-2 font-medium"></th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-[#edf0e8]">
+                <For each={sorted()}>
+                  {(row) => {
+                    const isInflight = () => {
+                      const s = state();
+                      return s.status === "deploying" && s.service === row.shortName;
+                    };
+                    return (
+                      <tr>
+                        <td class="px-3 py-2 font-medium">{row.shortName}</td>
+                        <td class="px-3 py-2 text-xs text-[#5b6558]">{row.strategy}</td>
+                        <td class="px-3 py-2 text-right">
+                          <button
+                            type="button"
+                            class="rounded-md border border-[#d7ddce] bg-white px-3 py-1 text-xs hover:bg-[#f1f4ec] disabled:cursor-not-allowed disabled:opacity-50"
+                            disabled={state().status === "deploying"}
+                            onClick={() => {
+                              void deploy(row.shortName);
+                            }}
+                            title={`Deploy ${row.shortName} via ${row.strategy}`}
+                          >
+                            {isInflight() ? "Deploying…" : "Deploy"}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  }}
+                </For>
+              </tbody>
+            </table>
+          </div>
+        </Show>
+        <Show when={state().status === "ok"}>
+          {(_ok) => {
+            const s = state();
+            if (s.status !== "ok") return null;
+            return (
+              <div class="rounded-md border border-[#9ebf8a] bg-[#f1f8ea] p-3 text-xs">
+                <div class="font-medium text-[#284b35]">
+                  {s.service} confirmed ({s.version})
+                </div>
+                <div class="mt-1 text-[#5b6558]">{s.detail}</div>
+                <div class="mt-1 text-[#5b6558]">trace {s.traceId}</div>
+              </div>
+            );
+          }}
+        </Show>
+        <Show when={state().status === "error"}>
+          {(_err) => {
+            const s = state();
+            if (s.status !== "error") return null;
+            return (
+              <div class="rounded-md border border-[#d3504f] bg-[#fbeded] p-3 text-xs text-[#7a2a29]">
+                <div class="font-medium">{s.service} failed</div>
+                <div class="mt-1 whitespace-pre-wrap">{s.message}</div>
+              </div>
+            );
+          }}
+        </Show>
       </div>
     </Panel>
   );
@@ -2711,6 +2882,7 @@ function routeView(path: string, data: RouteData) {
       token={data.token}
       createTaskState={data.createTaskState}
       onCreateTaskState={data.onCreateTaskState}
+      deployTargets={data.deployTargets}
     />
   );
 }
@@ -2733,6 +2905,12 @@ function recentEventsUrl(token: string, subject: string) {
 
 function runtimeServicesUrl(token: string) {
   const url = new URL("/api/runtime/services", window.location.href);
+  url.searchParams.set("token", token);
+  return url;
+}
+
+function deployTargetsUrl(token: string) {
+  const url = new URL("/api/deploy", window.location.href);
   url.searchParams.set("token", token);
   return url;
 }
@@ -2865,6 +3043,16 @@ function parseServiceRow(raw: unknown): ServiceRow {
     restarts: numberField(item, "restarts") ?? 0,
     uptime: stringField(item, "system_time") ?? "-",
     running
+  };
+}
+
+function parseDeployTargetRow(raw: unknown): DeployTargetRow {
+  const item = recordFromUnknown(raw);
+  return {
+    shortName: stringField(item, "short_name") ?? "unknown",
+    crateName: stringField(item, "crate_name") ?? "",
+    binaryName: stringField(item, "binary_name") ?? "",
+    strategy: stringField(item, "strategy") ?? "unknown"
   };
 }
 

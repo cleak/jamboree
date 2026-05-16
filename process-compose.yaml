@@ -70,7 +70,10 @@ processes:
   jam-nats-bridge:
     description: "Subscribes to journal.* and writes JSONL via jam-journal."
     user: maestro
-    command: "/opt/jam/bin/jam-nats-bridge"
+    # Fixed path under ~maestro/.jam/bin/ so `jam deploy nats-bridge`'s
+    # StopReplaceRestart strategy can rename a new binary into place and
+    # restart without YAML edits. See crates/jam-tools-core/src/deploy_targets.rs.
+    command: "/home/maestro/.jam/bin/jam-nats-bridge"
     depends_on:
       nats:
         condition: process_healthy
@@ -291,7 +294,8 @@ processes:
 
   pr-status-poller:
     user: maestro
-    command: "/opt/jam/bin/jam-pr-poller"
+    # Fixed path under ~maestro/.jam/bin/ for StopReplaceRestart deploys.
+    command: "/home/maestro/.jam/bin/jam-pr-poller"
     depends_on:
       nats:
         condition: process_healthy

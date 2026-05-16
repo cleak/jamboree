@@ -381,21 +381,54 @@ fn run_pre_checks(event: &ExitedEvent) -> CheckOutcome {
     }
 
     // 2. Commits ahead of trunk.
+    //
+    // The configured trunk env var was originally Blueberry-shaped
+    // (JAM_TRUNK_BRANCH=master). For Jamboree the trunk is "main" and there
+    // may be no `origin` at all. Try the configured remote ref first, then
+    // common fallbacks, then the local branch. The first ref that resolves
+    // is the trunk we count against.
     let base = std::env::var(DEFAULT_BASE_ENV).unwrap_or_else(|_| DEFAULT_BASE.into());
+    let candidates = [
+        format!("origin/{base}"),
+        "origin/main".to_string(),
+        "origin/master".to_string(),
+        base.clone(),
+        "main".to_string(),
+        "master".to_string(),
+    ];
+    let mut resolved_base: Option<String> = None;
+    for candidate in &candidates {
+        let cmd = format!(
+            "cd {wt} && git rev-parse --verify {ref_} >/dev/null 2>&1 && echo {ref_}",
+            wt = shell_quote(&wt),
+            ref_ = shell_quote(candidate),
+        );
+        let out = sudo_picker_check(&cmd);
+        if !out.trim().is_empty() {
+            resolved_base = Some(candidate.clone());
+            break;
+        }
+    }
+    let Some(base_ref) = resolved_base else {
+        return CheckOutcome::NeedsContinuation {
+            reason: "no-trunk-ref",
+            detail: format!(
+                "couldn't resolve any of {} as the trunk ref in {wt}",
+                candidates.join(", ")
+            ),
+        };
+    };
     let ahead_cmd = format!(
-        "cd {wt} && git rev-list --count origin/{base}..HEAD 2>/dev/null",
+        "cd {wt} && git rev-list --count {base_ref}..HEAD 2>/dev/null",
         wt = shell_quote(&wt),
-        base = shell_quote(&base),
+        base_ref = shell_quote(&base_ref),
     );
     let ahead = sudo_picker_check(&ahead_cmd);
     let ahead_count = ahead.trim().parse::<u32>().unwrap_or(0);
     if ahead_count == 0 {
         return CheckOutcome::NeedsContinuation {
             reason: "no-commits",
-            detail: format!(
-                "branch {} has no commits ahead of origin/{}",
-                event.branch, base
-            ),
+            detail: format!("branch {} has no commits ahead of {}", event.branch, base_ref),
         };
     }
 
@@ -506,6 +539,11 @@ async fn publish_continuation(
     prompt: &str,
     ctx: &TraceCtx,
 ) {
+    // Count prior continuations for this task so handle_continuation_needed's
+    // attempt cap fires. Previous behaviour hardcoded attempt=0 and the loop
+    // ran forever for tasks whose pre-checks always failed (e.g. jamboree
+    // self-modify without a github origin → "no-commits" every time).
+    let prior_attempts = count_recent_continuations(&event.task_id).await;
     let payload = PickerContinuationNeeded {
         task_id: event.task_id.clone(),
         session_id: event.session_id.clone(),
@@ -513,7 +551,7 @@ async fn publish_continuation(
         reason: reason.to_owned(),
         detail: detail.to_owned(),
         prompt: prompt.to_owned(),
-        attempt: 0, // coordinator will increment on subsequent emissions
+        attempt: prior_attempts,
         requested_at: Utc::now(),
     };
     let envelope = jam_events::EventEnvelope::new(
@@ -538,6 +576,24 @@ async fn publish_continuation(
             "picker.continuation-needed published",
         );
     }
+}
+
+/// Count prior `picker.continuation-needed` events recorded today for this
+/// task. Used to populate the `attempt` field so the cap actually fires.
+/// Returns 0 if the journal file isn't readable yet.
+async fn count_recent_continuations(task_id: &str) -> u32 {
+    let date = Utc::now().format("%Y-%m-%d");
+    let path = format!("/home/maestro/.jam/journal/{date}/journal.picker.jsonl");
+    let Ok(content) = tokio::fs::read_to_string(&path).await else {
+        return 0;
+    };
+    let needle = format!("\"task_id\":\"{task_id}\"");
+    let event_marker = "\"event_type\":\"picker.continuation-needed\"";
+    let count = content
+        .lines()
+        .filter(|line| line.contains(event_marker) && line.contains(&needle))
+        .count();
+    u32::try_from(count).unwrap_or(u32::MAX)
 }
 
 fn draft_continuation_prompt(reason: &str, detail: &str, event: &ExitedEvent) -> String {

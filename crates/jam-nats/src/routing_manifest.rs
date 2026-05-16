@@ -132,6 +132,124 @@ pub fn version_subject_suffix(version: &str) -> String {
     }
 }
 
+/// Cached resolver for `service.method` → live NATS subject lookups.
+///
+/// Rust services that call other Rust services (e.g. `jam-svc-session`
+/// calling `tool.worktree.create`) need to consult the routing manifest
+/// because the called service's actual subject changes whenever
+/// `jam-patch-agent` hot-patches it to a new version. Direct use of the
+/// unversioned `tool.<service>.<method>` subject is fragile — it works
+/// only when no patch has been applied yet.
+///
+/// Equivalent to Python's `RoutingManifestRouter` in
+/// `maestro/src/jam_maestro/routing_manifest.py`. Caches the manifest
+/// and refreshes on every `routing-manifest.updated` event the caller
+/// pumps through `apply_update`. Falls back to the unversioned subject
+/// when the manifest doesn't list the service (first-deploy case).
+#[derive(Debug, Clone)]
+pub struct RoutingResolver {
+    js: Option<async_nats::jetstream::Context>,
+    cache: std::sync::Arc<tokio::sync::RwLock<RoutingCache>>,
+}
+
+#[derive(Debug, Default)]
+struct RoutingCache {
+    manifest: Option<RoutingManifest>,
+    revision: Option<u64>,
+}
+
+impl RoutingResolver {
+    /// Build a resolver bound to the given JetStream context. The cache
+    /// starts empty; the first `subject_for` call triggers an initial load.
+    #[must_use]
+    pub fn new(js: async_nats::jetstream::Context) -> Self {
+        Self {
+            js: Some(js),
+            cache: std::sync::Arc::new(tokio::sync::RwLock::new(RoutingCache::default())),
+        }
+    }
+
+    /// Disconnected resolver for tests and non-NATS contexts. Always returns
+    /// `tool.<service>.<method>` (the unversioned fallback). No NATS calls.
+    #[must_use]
+    pub fn disconnected() -> Self {
+        Self {
+            js: None,
+            cache: std::sync::Arc::new(tokio::sync::RwLock::new(RoutingCache::default())),
+        }
+    }
+
+    /// Resolve `service.method` to the current NATS request subject.
+    ///
+    /// Falls back to `tool.<service>.<method>` if the manifest doesn't
+    /// list `service` — that path keeps first-deploy / cold-start flows
+    /// working before patch-agent has staged anything.
+    pub async fn subject_for(&self, service: &str, method: &str) -> String {
+        {
+            let cache = self.cache.read().await;
+            if let Some(manifest) = cache.manifest.as_ref() {
+                if let Some(subject) = manifest.subject_for(service, method) {
+                    return subject;
+                }
+            }
+        }
+        // Either no cached manifest yet, or the cached manifest doesn't
+        // list this service. Refresh and try once more before falling
+        // back. This is the slow path; expected at startup and after
+        // explicit `apply_update` calls.
+        if let Err(err) = self.refresh().await {
+            tracing::warn!(error = %err, service, method, "routing manifest refresh failed; falling back to unversioned subject");
+        }
+        {
+            let cache = self.cache.read().await;
+            if let Some(manifest) = cache.manifest.as_ref() {
+                if let Some(subject) = manifest.subject_for(service, method) {
+                    return subject;
+                }
+            }
+        }
+        format!("tool.{service}.{method}")
+    }
+
+    /// Force-reload the manifest from NATS KV. Idempotent; cheap. No-op for
+    /// resolvers built with [`disconnected`](Self::disconnected).
+    pub async fn refresh(&self) -> Result<(), NatsError> {
+        let Some(js) = self.js.as_ref() else {
+            return Ok(());
+        };
+        let entry = load_current_routing_manifest(js).await?;
+        let mut cache = self.cache.write().await;
+        match entry {
+            Some(e) => {
+                cache.revision = Some(e.revision);
+                cache.manifest = Some(e.manifest);
+            }
+            None => {
+                cache.revision = None;
+                cache.manifest = None;
+            }
+        }
+        Ok(())
+    }
+
+    /// Update the cache from a `routing-manifest.updated` event payload.
+    /// Call this from the subscriber loop that pumps the update subject.
+    /// Returns `true` if the payload advanced the cache (newer revision),
+    /// `false` if it was a duplicate or older.
+    pub async fn apply_update_revision(&self, revision: u64) -> Result<bool, NatsError> {
+        {
+            let cache = self.cache.read().await;
+            if cache.revision.is_some_and(|cached| cached >= revision) {
+                return Ok(false);
+            }
+        }
+        // Always re-load from KV rather than trust the event payload — the
+        // event carries `manifest_id` but not the full manifest blob.
+        self.refresh().await?;
+        Ok(true)
+    }
+}
+
 /// Load the current routing manifest from NATS KV.
 pub async fn load_current_routing_manifest(
     js: &async_nats::jetstream::Context,
@@ -252,6 +370,22 @@ mod tests {
         );
         assert_eq!(manifest.subject_for("missing", "world-snapshot"), None);
         assert_eq!(manifest.subject_for("observe", ""), None);
+    }
+
+    #[tokio::test]
+    async fn disconnected_resolver_returns_unversioned_fallback() {
+        let resolver = RoutingResolver::disconnected();
+        // No NATS reachable, but no panic and no infinite refresh loop.
+        let subject = resolver.subject_for("worktree", "create").await;
+        assert_eq!(subject, "tool.worktree.create");
+    }
+
+    #[tokio::test]
+    async fn disconnected_resolver_refresh_is_noop() {
+        let resolver = RoutingResolver::disconnected();
+        // Repeated calls should not error.
+        resolver.refresh().await.unwrap();
+        resolver.refresh().await.unwrap();
     }
 
     #[test]

@@ -421,7 +421,16 @@ async fn create_worktree(
     let branch = format!("task/{}", input.task_id);
 
     let fetch = maybe_fetch(&repo_path, state).await?;
-    let trunk_ref = format!("origin/{trunk_branch}");
+    // Prefer `origin/<trunk>` (latest fetched remote tip) when the fetch
+    // actually succeeded. Otherwise fall back to the local branch ref so
+    // worktree creation still succeeds for private repos with no working
+    // remote (jamboree before it's pushed, network outages, 404'd origin).
+    let remote_ref = format!("origin/{trunk_branch}");
+    let trunk_ref = if fetch.fetched && rev_parse(&repo_path, &remote_ref).await.is_ok() {
+        remote_ref
+    } else {
+        trunk_branch.clone()
+    };
     let trunk_sha = rev_parse(&repo_path, &trunk_ref).await?;
 
     {
@@ -493,14 +502,33 @@ async fn maybe_fetch(
         }
     }
 
-    git(repo_path, ["fetch", "origin", "--prune", "--tags"]).await?;
+    // Fetch is best-effort. Failure modes that should NOT block worktree
+    // creation:
+    //   - origin has no URL configured (private monorepo, never pushed)
+    //   - origin URL resolves but the remote repo doesn't exist (404)
+    //   - network is down
+    // We still try the fetch so day-to-day Blueberry/Jamboree work picks up
+    // upstream refs; we just log + continue when it fails. The rest of the
+    // flow uses whichever ref `trunk_ref` resolves to — local-only refs work
+    // fine when origin isn't fetchable.
+    let fetched = match git(repo_path, ["fetch", "origin", "--prune", "--tags"]).await {
+        Ok(_) => true,
+        Err(err) => {
+            tracing::warn!(
+                repo = %repo_path.display(),
+                error = ?err,
+                "git fetch origin failed; continuing with local refs",
+            );
+            false
+        }
+    };
     let mut cursor = state.fetch_cursor.lock().await;
     *cursor = Some(FetchCursor {
         fetched_at: now,
         observed_at: Instant::now(),
     });
     Ok(FetchOutcome {
-        fetched: true,
+        fetched,
         cursor_at: now,
     })
 }

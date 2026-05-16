@@ -148,7 +148,8 @@ def main() -> None:
 
 
 async def _world_snapshot(task_id: str, nats_url: str, trace_id: str | None) -> SessionDecision:
-    loop = MaestroSessionLoop(_observe_client(nats_url))
+    observe_routing = RoutingManifestRouter(NatsRoutingManifestSource(nats_url))
+    loop = MaestroSessionLoop(NatsObserveClient(nats_url, routing=observe_routing))
     return await loop.run_task_wake(task_id, trace_id)
 
 
@@ -185,38 +186,88 @@ async def _listen(
     tempyr_worktree: str | None,
     skills_root: str | None,
 ) -> None:
-    loop = _runtime_loop(nats_url, tempyr_worktree, skills_root)
-    async for wake in subscribe_task_wakes(nats_url=nats_url, timeout_secs=timeout_secs):
-        decision = await loop.run_task_wake(wake)
-        sys.stdout.write(f"{decision.model_dump_json()}\n")
-        sys.stdout.flush()
+    # Build the routers up-front so we can also pass them to a background
+    # routing-manifest watcher. Sharing one router per client keeps caches in
+    # sync across all tasks.
+    observe_routing = RoutingManifestRouter(NatsRoutingManifestSource(nats_url))
+    session_routing = RoutingManifestRouter(NatsRoutingManifestSource(nats_url))
+    loop = _runtime_loop(
+        nats_url, tempyr_worktree, skills_root, observe_routing, session_routing
+    )
+    refresher = asyncio.create_task(
+        _refresh_routing_on_manifest_updates(
+            nats_url=nats_url,
+            routers=(observe_routing, session_routing),
+        )
+    )
+    try:
+        async for wake in subscribe_task_wakes(nats_url=nats_url, timeout_secs=timeout_secs):
+            try:
+                decision = await loop.run_task_wake(wake)
+                sys.stdout.write(f"{decision.model_dump_json()}\n")
+                sys.stdout.flush()
+            except Exception as err:  # pragma: no cover - resilience guard
+                # A single task wake failing must not kill the whole listener.
+                # The original implementation let the exception propagate,
+                # which crashed `process-compose process maestro` whenever a
+                # downstream RPC timed out (e.g. stale routing cache after a
+                # session redeploy). Logging + continuing keeps the orchestrator
+                # responsive; the task itself surfaces the error via
+                # task.failed in the journal.
+                sys.stderr.write(
+                    f"task wake handler failed: {type(err).__name__}: {err}\n"
+                )
+                sys.stderr.flush()
+    finally:
+        refresher.cancel()
+
+
+async def _refresh_routing_on_manifest_updates(
+    *,
+    nats_url: str,
+    routers: tuple[RoutingManifestRouter, ...],
+) -> None:
+    """Subscribe to `routing-manifest.updated` and refresh every router on
+    each update. Without this, the maestro loop keeps publishing to the
+    previous version's subject after `jam deploy` swaps the manifest, and
+    every downstream call gets `no responders`."""
+    from jam_maestro.nats_rpc import subscribe_json
+
+    async for _msg in subscribe_json(
+        nats_url=nats_url,
+        subject="routing-manifest.updated",
+    ):
+        for router in routers:
+            try:
+                await router.refresh("00000000000000000000000000")
+            except Exception as err:  # pragma: no cover - resilience guard
+                sys.stderr.write(
+                    f"routing manifest refresh failed: {type(err).__name__}: {err}\n"
+                )
+                sys.stderr.flush()
 
 
 def _runtime_loop(
     nats_url: str,
     tempyr_worktree: str | None,
     skills_root: str | None,
+    observe_routing: RoutingManifestRouter | None = None,
+    session_routing: RoutingManifestRouter | None = None,
 ) -> MaestroSessionLoop:
+    if observe_routing is None:
+        observe_routing = RoutingManifestRouter(NatsRoutingManifestSource(nats_url))
+    if session_routing is None:
+        session_routing = RoutingManifestRouter(NatsRoutingManifestSource(nats_url))
     worktree = Path(tempyr_worktree) if tempyr_worktree else None
     root = Path(skills_root) if skills_root else None
     return MaestroSessionLoop(
-        _observe_client(nats_url),
+        NatsObserveClient(nats_url, routing=observe_routing),
         skills=FileSkillLoader(default_root=root),
-        session=_session_client(nats_url),
+        session=NatsSessionClient(nats_url, routing=session_routing),
         task_events=NatsTaskEventPublisher(nats_url),
         journal=CliTempyrJournal(worktree=worktree),
         input_budget=load_input_budget_config(),
     )
-
-
-def _observe_client(nats_url: str) -> NatsObserveClient:
-    routing = RoutingManifestRouter(NatsRoutingManifestSource(nats_url))
-    return NatsObserveClient(nats_url, routing=routing)
-
-
-def _session_client(nats_url: str) -> NatsSessionClient:
-    routing = RoutingManifestRouter(NatsRoutingManifestSource(nats_url))
-    return NatsSessionClient(nats_url, routing=routing)
 
 
 if __name__ == "__main__":

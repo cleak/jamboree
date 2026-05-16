@@ -138,6 +138,7 @@ impl SessionError {
 struct SessionState {
     config: SessionConfig,
     active: Arc<Mutex<HashMap<String, PickerRecord>>>,
+    routing: jam_nats::RoutingResolver,
 }
 
 #[derive(Debug, Clone)]
@@ -578,9 +579,17 @@ async fn run() -> Result<(), ServiceError> {
     let nats = JamNats::connect(&nats_url, nats_token).await?;
     info!("connected to NATS");
 
+    let routing = jam_nats::RoutingResolver::new(nats.jetstream().clone());
+    // Warm the cache so the first inter-service call doesn't pay the slow
+    // path. Non-fatal if it fails (no manifest yet → fallback subjects).
+    if let Err(err) = routing.refresh().await {
+        info!(error = %err, "routing manifest refresh failed at startup; will retry on demand");
+    }
+
     let state = SessionState {
         config,
         active: Arc::new(Mutex::new(HashMap::new())),
+        routing,
     };
 
     let mut sub = nats
@@ -589,6 +598,21 @@ async fn run() -> Result<(), ServiceError> {
         .await
         .map_err(|e| ServiceError::Subscribe(e.to_string()))?;
     info!(subject = %format!("{subject_prefix}.>"), "subscribed");
+
+    // Also subscribe to routing-manifest.updated so our cached subject
+    // lookups for downstream services (worktree, repo, …) follow each
+    // patch-agent hot-swap. Without this, sessions started before a
+    // downstream redeploy would keep publishing to the previous version's
+    // subject — which has no subscribers after drain.
+    let mut routing_updates = nats
+        .client()
+        .subscribe(jam_nats::ROUTING_MANIFEST_UPDATED_SUBJECT)
+        .await
+        .map_err(|e| ServiceError::Subscribe(e.to_string()))?;
+    info!(
+        subject = jam_nats::ROUTING_MANIFEST_UPDATED_SUBJECT,
+        "subscribed to routing manifest updates"
+    );
 
     let shutdown = tokio::signal::ctrl_c();
     tokio::pin!(shutdown);
@@ -606,6 +630,15 @@ async fn run() -> Result<(), ServiceError> {
             _ = drain_check.tick(), if draining.load(Ordering::SeqCst) && active_requests.load(Ordering::SeqCst) == 0 => {
                 info!("drain complete; exiting");
                 return Ok(());
+            }
+            update = routing_updates.next() => {
+                if update.is_none() {
+                    warn!("routing-manifest.updated subscription closed");
+                    continue;
+                }
+                if let Err(err) = state.routing.refresh().await {
+                    warn!(error = %err, "routing manifest refresh failed; will retry on next update");
+                }
             }
             msg = sub.next() => {
                 let Some(message) = msg else {
@@ -920,6 +953,7 @@ async fn launch_picker(
         state.active.clone(),
         nats.clone(),
         state.config.clone(),
+        state.routing.clone(),
         handle.clone(),
         picker_trace,
         ctx.clone(),
@@ -1210,19 +1244,19 @@ async fn create_worktree(
         worktree_root: None,
         trunk_branch: None,
     };
+    // Resolve via the routing manifest so we hit the currently-deployed
+    // worktree's versioned subject, not the unversioned `tool.worktree.create`
+    // (which has no subscriber once patch-agent has moved worktree to a
+    // versioned prefix).
+    let subject = state.routing.subject_for("worktree", "create").await;
     let value: serde_json::Value = nats
-        .request_traced(
-            state.config.worktree_subject.clone(),
-            &request,
-            picker_trace,
-            state.config.request_timeout,
-        )
+        .request_traced(subject, &request, picker_trace, state.config.request_timeout)
         .await
         .map_err(|err| {
             SessionError::protocol(
                 "worktree-request-failed",
                 err.to_string(),
-                "Verify jam-svc-worktree is running and subscribed to tool.worktree.create.",
+                "Verify jam-svc-worktree is running and subscribed to its routing-manifest subject_prefix.",
                 "task-jam-svc-session-codex-cli-only",
             )
         })?;
@@ -3065,6 +3099,7 @@ fn watch_picker_exit(
     active: Arc<Mutex<HashMap<String, PickerRecord>>>,
     nats: JamNats,
     config: SessionConfig,
+    routing: jam_nats::RoutingResolver,
     handle: PickerHandle,
     picker_trace: TraceCtx,
     parent_trace: TraceCtx,
@@ -3120,6 +3155,7 @@ fn watch_picker_exit(
                         if let Err(err) = maybe_open_pr_for_successful_picker(
                             &nats,
                             &config,
+                            &routing,
                             &handle,
                             &picker_trace,
                         )
@@ -3144,6 +3180,7 @@ fn watch_picker_exit(
 async fn maybe_open_pr_for_successful_picker(
     nats: &JamNats,
     config: &SessionConfig,
+    routing: &jam_nats::RoutingResolver,
     handle: &PickerHandle,
     ctx: &TraceCtx,
 ) -> Result<(), SessionError> {
@@ -3173,19 +3210,17 @@ async fn maybe_open_pr_for_successful_picker(
         worktree_path: handle.worktree_path.clone(),
         push: true,
     };
+    // Route through the manifest so patch-agent-applied versions of jam-svc-repo
+    // are reached at their current subject_prefix, not the unversioned default.
+    let subject = routing.subject_for("repo", "open-pr").await;
     let value: serde_json::Value = nats
-        .request_traced(
-            config.repo_open_pr_subject.clone(),
-            &request,
-            ctx,
-            config.request_timeout,
-        )
+        .request_traced(subject, &request, ctx, config.request_timeout)
         .await
         .map_err(|err| {
             SessionError::protocol(
                 "repo-open-pr-request-failed",
                 err.to_string(),
-                "Verify jam-svc-repo is running and GitHub App authentication works.",
+                "Verify jam-svc-repo is running and reachable at its routing-manifest subject_prefix.",
                 "api-open-pr",
             )
         })?;
@@ -6309,6 +6344,7 @@ github-mcp = { url = "https://api.githubcopilot.com/mcp/", enabled = true, auth 
         let state = SessionState {
             config: test_config(false),
             active: Arc::new(Mutex::new(HashMap::new())),
+            routing: jam_nats::RoutingResolver::disconnected(),
         };
         state.active.lock().await.insert(
             "codex-cli:running".into(),

@@ -43,10 +43,6 @@ chat:
 # Suggest fewer nits in agentic tasks; the Picker can't always action style
 # nits and we don't want to loop on them.
 tone_instructions: |
-  This repository is operated by an autonomous orchestrator. Every PR was
-  produced by a Picker agent, not a human. Prioritize correctness, safety,
-  and architectural-invariant violations over style or naming preferences.
-  When you have no substantive concerns, post an APPROVED review so the
-  PR can auto-merge. Use CHANGES_REQUESTED only for issues that meaningfully
-  affect runtime behavior, security, or the load-bearing principles called
-  out in CLAUDE.md / AGENTS.md.
+  PRs here come from an autonomous Picker. Focus on correctness, safety, and
+  CLAUDE.md invariants - skip style nits. APPROVE when no substantive
+  concerns. Use CHANGES_REQUESTED only for real behavior/security issues.

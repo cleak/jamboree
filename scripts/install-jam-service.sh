@@ -16,10 +16,11 @@
 # version is a no-op.
 #
 # Usage:
-#   sudo ./scripts/install-jam-service.sh            # install + reload
-#   sudo ./scripts/install-jam-service.sh --enable    # also enable on boot
-#   sudo ./scripts/install-jam-service.sh --start     # also start now
-#   sudo ./scripts/install-jam-service.sh --dry-run
+#   sudo ./scripts/install-jam-service.sh                # install + reload
+#   sudo ./scripts/install-jam-service.sh --enable        # also enable on boot
+#   sudo ./scripts/install-jam-service.sh --start         # also start now
+#   sudo ./scripts/install-jam-service.sh --dry-run       # show what would change
+#   sudo ./scripts/install-jam-service.sh --verify-only   # audit installed unit; non-zero exit if drifted
 
 set -euo pipefail
 
@@ -27,9 +28,15 @@ UNIT_PATH="/etc/systemd/system/jam.service"
 COMPOSE_PATH_DEFAULT="/home/caleb/jamboree/process-compose.yaml"
 PROCESS_COMPOSE_BIN_DEFAULT="/opt/jam/bin/process-compose"
 SOCK_PATH_DEFAULT="/home/maestro/.jam/process-compose.sock"
+# Canonical maestro user matches the hardcoded paths in
+# crates/jam-tools-core/src/deploy_targets.rs (CanonicalBinary
+# dest_path = /home/maestro/.jam/bin/jam). The override env exists for
+# tests; production must use "maestro" or the symlinks point at the
+# wrong place after the next `jam deploy cli`.
 MAESTRO_USER="${JAM_MAESTRO_USER:-maestro}"
 
 DRY_RUN=0
+VERIFY_ONLY=0
 ENABLE=0
 START=0
 COMPOSE_PATH="$COMPOSE_PATH_DEFAULT"
@@ -58,13 +65,14 @@ require_root() {
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --dry-run) DRY_RUN=1; shift ;;
-            --enable)  ENABLE=1; shift ;;
-            --start)   START=1; shift ;;
-            --compose) COMPOSE_PATH="$2"; shift 2 ;;
-            --bin)     PROCESS_COMPOSE_BIN="$2"; shift 2 ;;
-            --sock)    SOCK_PATH="$2"; shift 2 ;;
-            --help|-h) sed -n '2,22p' "$0" | sed 's/^# //; s/^#//'; exit 0 ;;
+            --dry-run)     DRY_RUN=1; shift ;;
+            --verify-only) VERIFY_ONLY=1; shift ;;
+            --enable)      ENABLE=1; shift ;;
+            --start)       START=1; shift ;;
+            --compose)     COMPOSE_PATH="$2"; shift 2 ;;
+            --bin)         PROCESS_COMPOSE_BIN="$2"; shift 2 ;;
+            --sock)        SOCK_PATH="$2"; shift 2 ;;
+            --help|-h)     sed -n '2,22p' "$0" | sed 's/^# //; s/^#//'; exit 0 ;;
             *) die "unknown argument: $1" "See $0 --help." 64 ;;
         esac
     done
@@ -153,6 +161,16 @@ install_unit() {
         return
     fi
 
+    if [[ $VERIFY_ONLY -eq 1 ]]; then
+        warn "jam.service drifted from the in-tree template:"
+        if [[ -f "$UNIT_PATH" ]]; then
+            diff -u "$UNIT_PATH" "$tmp" | sed 's/^/    /' >&2 || true
+        else
+            warn "  $UNIT_PATH does not exist"
+        fi
+        return 1
+    fi
+
     if [[ $DRY_RUN -eq 1 ]]; then
         info "[dry-run] would write $UNIT_PATH:"
         sed 's/^/    /' "$tmp" >&2
@@ -166,6 +184,7 @@ install_unit() {
 }
 
 maybe_enable() {
+    [[ $VERIFY_ONLY -eq 1 ]] && return 0
     [[ $ENABLE -eq 1 ]] || return 0
     if [[ $DRY_RUN -eq 1 ]]; then
         info "[dry-run] would systemctl enable jam.service"
@@ -176,6 +195,7 @@ maybe_enable() {
 }
 
 maybe_start() {
+    [[ $VERIFY_ONLY -eq 1 ]] && return 0
     [[ $START -eq 1 ]] || return 0
     if [[ $DRY_RUN -eq 1 ]]; then
         info "[dry-run] would systemctl start jam.service"
@@ -183,9 +203,10 @@ maybe_start() {
     fi
     # Caller is responsible for stopping any pre-existing root-launched
     # process-compose before starting the unit. Detect the conflict and
-    # warn loudly rather than racing.
-    if pgrep -af '/opt/jam/bin/process-compose .* up' >/dev/null 2>&1; then
-        warn "a process-compose instance is already running; not auto-stopping it"
+    # warn loudly rather than racing. Use the configured binary path so
+    # --bin overrides also catch their own racing instance.
+    if pgrep -af "${PROCESS_COMPOSE_BIN}.* up" >/dev/null 2>&1; then
+        warn "a $PROCESS_COMPOSE_BIN instance is already running; not auto-stopping it"
         warn "stop it manually before invoking --start, e.g.:"
         warn "  sudo $PROCESS_COMPOSE_BIN -U -u $SOCK_PATH down"
         return

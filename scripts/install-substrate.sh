@@ -602,10 +602,27 @@ install_first_party_binaries() {
 }
 
 install_cli_canonical_paths() {
-    local maestro_bin="/home/$MAESTRO_USER/.jam/bin"
+    # The CLI's runtime path is hardcoded in deploy_targets.rs:
+    #
+    #     CanonicalBinary { dest_path: "/home/maestro/.jam/bin/jam" }
+    #
+    # so this installer MUST seed exactly that path. Using
+    # /home/$MAESTRO_USER would diverge if MAESTRO_USER were overridden
+    # (e.g. for tests or alternate-user installs) and `jam deploy cli`
+    # would then write somewhere the symlinks don't point. Pin the
+    # canonical path explicitly; MAESTRO_USER is still the right value
+    # to pass to chown/chgrp for the file ownership.
+    local canonical_user="maestro"
+    local maestro_bin="/home/$canonical_user/.jam/bin"
     local maestro_jam="$maestro_bin/jam"
     local stable_link="/usr/local/bin/jam"
     local src="$REPO_ROOT/target/release/jam"
+
+    if [[ "$MAESTRO_USER" != "$canonical_user" ]]; then
+        warn "MAESTRO_USER=$MAESTRO_USER differs from the canonical \"$canonical_user\""
+        warn "the CLI binary will land at $maestro_jam (matching deploy_targets.rs),"
+        warn "but ownership will be chowned to $MAESTRO_USER"
+    fi
 
     if [[ $DRY_RUN -eq 0 && ! -x "$src" ]]; then
         die "Built jam binary missing: $src" \
@@ -614,7 +631,7 @@ install_cli_canonical_paths() {
 
     run_cmd install -d -o "$MAESTRO_USER" -g "$MAESTRO_USER" -m 0755 "$maestro_bin"
     run_cmd install -o "$MAESTRO_USER" -g "$MAESTRO_USER" -m 0755 "$src" "$maestro_jam"
-    pass "jam installed at $maestro_jam (maestro-owned)"
+    pass "jam installed at $maestro_jam (owned by $MAESTRO_USER)"
 
     # /usr/local/bin/jam → ~maestro/.jam/bin/jam. Stable across CLI
     # self-updates because the symlink target doesn't move.

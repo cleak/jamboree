@@ -42,6 +42,8 @@ const DEFAULT_FETCH_STALENESS_SECS: u64 = 60;
 const TASK_ID_MAX_LEN: usize = 128;
 const DEFAULT_PICKER_USER: &str = "picker";
 const DEFAULT_SUDO_BIN: &str = "sudo";
+/// No-op selftest marker used to confirm Jamboree can patch its own services.
+pub const JAM_SELFTEST_PIPELINE_NOOP_MARKER: &str = "jam-selftest-noop";
 
 #[derive(Debug, thiserror::Error)]
 enum ServiceError {
@@ -1186,6 +1188,11 @@ mod tests {
     #[test]
     fn default_worktree_root_is_picker_workers() {
         assert_eq!(DEFAULT_WORKTREE_ROOT, "/home/picker/workers");
+    }
+
+    #[test]
+    fn selftest_noop_marker_is_named() {
+        assert_eq!(JAM_SELFTEST_PIPELINE_NOOP_MARKER, "jam-selftest-noop");
     }
 
     #[tokio::test]

@@ -78,14 +78,17 @@ graph data bug — fix the node before re-running." 65
 # Always-run branch-in-use guard: probes the porcelain output of
 # `git -C <repo> worktree list` for the task's branch regardless of
 # whether refs/heads/<branch> is loose or packed. This catches the case
-# CodeRabbit flagged where a checked-out branch with a packed ref would
-# otherwise have slipped past the guard.
+# where a checked-out branch with a packed ref would otherwise slip past
+# the guard. The "skip" argument is the picker's filesystem worktree path
+# — `git worktree list --porcelain` emits filesystem paths, not
+# `.git/worktrees/<name>/` admin dirs, so we have to compare apples to
+# apples to allow cleaning the task's own stale worktree.
 branch_in_use_elsewhere() {
     local repo="$1"
     local branch="$2"
-    local admin_dir="$3"
+    local skip_worktree="$3"
     git -C "$repo" worktree list --porcelain 2>/dev/null \
-        | awk -v want="refs/heads/$branch" -v skip="$admin_dir" '
+        | awk -v want="refs/heads/$branch" -v skip="$skip_worktree" '
             /^worktree / { wt = $2 }
             /^branch /   { br = $2; if (br == want && wt != skip) found=1 }
             END          { exit (found ? 0 : 1) }
@@ -104,7 +107,10 @@ cleanup_one() {
 
     info "cleanup $task_id"
 
-    if branch_in_use_elsewhere "$repo" "$branch" "$admin_dir"; then
+    # Pass picker_path as "skip" — the porcelain output is filesystem
+    # paths, so we have to match against the worktree's filesystem path
+    # (not its admin dir) for "the task's own worktree" to compare equal.
+    if branch_in_use_elsewhere "$repo" "$branch" "$picker_path"; then
         warn "skipping $task_id: branch $branch is in use by another worktree"
         return 0
     fi

@@ -39,7 +39,7 @@ const DEFAULT_WORKTREE_ROOT: &str = "/home/picker/workers";
 const DEFAULT_BLUEBERRY_TRUNK_BRANCH: &str = "main";
 const DEFAULT_JAMBOREE_TRUNK_BRANCH: &str = "main";
 const DEFAULT_FETCH_STALENESS_SECS: u64 = 60;
-const TASK_ID_MAX_LEN: usize = 128;
+const TASK_ID_LENGTH_LIMIT: usize = 128;
 const DEFAULT_PICKER_USER: &str = "picker";
 const DEFAULT_SUDO_BIN: &str = "sudo";
 
@@ -835,7 +835,7 @@ fn parse_conflicts_input(payload: &[u8]) -> Result<FindConflictsInput, WorktreeE
 }
 
 fn validate_task_id(task_id: &str) -> Result<(), WorktreeError> {
-    if task_id.is_empty() || task_id.len() > TASK_ID_MAX_LEN {
+    if task_id.is_empty() || task_id.len() > TASK_ID_LENGTH_LIMIT {
         return Err(WorktreeError::protocol(
             "invalid-task-id",
             "task_id must be 1-128 characters",

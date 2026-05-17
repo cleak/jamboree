@@ -375,6 +375,8 @@ mod tests {
             sandbox_backend: "local".into(),
             sandbox_profile: "default".into(),
             task_class: "compile-heavy-rust".into(),
+            codex_conversation_id: None,
+            parent_session_id: None,
         };
 
         writer.write(payload, TraceId::new(), None).unwrap();

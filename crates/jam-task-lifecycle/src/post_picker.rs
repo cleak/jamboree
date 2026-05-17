@@ -27,7 +27,16 @@ const RESUME_PICKER_METHOD: &str = "resume-picker";
 const CONTINUATION_SUBJECT: &str = "journal.picker.continuation-needed";
 const OPEN_PR_TIMEOUT: Duration = Duration::from_secs(60);
 const RESUME_PICKER_TIMEOUT: Duration = Duration::from_secs(30);
-const CONTINUATION_ATTEMPT_CAP: u32 = 3;
+/// Per-task iteration cap. Each round of post-picker coordination — bad
+/// pre-checks, CI failures, CodeRabbit-requested changes — counts as one
+/// attempt. Hitting the cap means the picker can't satisfy the system on
+/// its own; the task settles for human triage instead of looping forever.
+///
+/// 5 is calibrated for the CodeRabbit-loop case: typical agentic flow is
+/// (1) initial review → picker addresses comments → (2) follow-up review →
+/// CodeRabbit usually approves. 5 leaves room for two more cycles before
+/// giving up. Was 3 historically (sized for pre-CodeRabbit-loop usage).
+const CONTINUATION_ATTEMPT_CAP: u32 = 5;
 
 /// Resolve a tool subject through the routing manifest.
 ///

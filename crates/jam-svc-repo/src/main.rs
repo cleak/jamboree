@@ -714,6 +714,19 @@ async fn open_pr(
             branch = %input.branch,
             "open-pr is idempotent on existing PR; returning current pr_ref",
         );
+        // Re-arm auto-merge in case it was disarmed by a previous force-push or
+        // the PR was created externally. Cheap, idempotent on GitHub's side.
+        if !existing.is_draft {
+            if let Err(err) =
+                gh_pr_enable_auto_merge(&state.config, &repo, &existing.pr_ref).await
+            {
+                warn!(
+                    pr_ref = %existing.pr_ref,
+                    error = %err,
+                    "re-arming auto-merge failed on idempotent open-pr",
+                );
+            }
+        }
         let opened_at = Utc::now();
         return Ok(OpenPrOutput {
             task_id: input.task_id,
@@ -761,6 +774,23 @@ async fn open_pr(
             );
         }
     }
+    // Arm GitHub auto-merge for this PR. With the configured branch
+    // protection (CI checks + CodeRabbit APPROVED review), GitHub will merge
+    // the PR automatically once both gates pass. Skipped for draft PRs;
+    // GitHub rejects auto-merge on drafts. A failure to enable auto-merge is
+    // logged but doesn't fail the PR open — the PR exists, it just won't
+    // self-merge until something re-arms it (a follow-up open-pr call hits
+    // the idempotent path above and re-arms automatically).
+    if !draft {
+        if let Err(err) = gh_pr_enable_auto_merge(&state.config, &repo, &pr_ref).await {
+            warn!(
+                pr_ref = %pr_ref,
+                error = %err,
+                "failed to enable auto-merge on freshly-opened PR",
+            );
+        }
+    }
+
     let output = OpenPrOutput {
         task_id: input.task_id,
         pr_ref,
@@ -774,6 +804,40 @@ async fn open_pr(
     };
     publish_pr_opened(nats, &output, ctx).await?;
     Ok(output)
+}
+
+/// Arm GitHub's native auto-merge for `pr_ref` (`owner/repo#number`).
+///
+/// Once enabled, GitHub merges the PR the moment its required status checks
+/// pass AND any required reviews are approved. With our branch protection
+/// (`jamboree-ci/*` checks + 1 CodeRabbit APPROVED review), this gives us a
+/// fully-agentic merge gate: CI verifies "still works", CodeRabbit verifies
+/// "looks reasonable", GitHub does the merge atomically. `--squash` keeps
+/// the public history one-commit-per-task; the picker's intermediate
+/// review-iteration commits collapse into a single squash commit.
+///
+/// Idempotent on the GitHub side (re-enabling on an already-armed PR is a
+/// 204 No-Op), so we can safely call this on every `open_pr` even when the
+/// idempotent path picks up an existing PR.
+async fn gh_pr_enable_auto_merge(
+    config: &RepoConfig,
+    repo: &str,
+    pr_ref: &str,
+) -> Result<(), RepoError> {
+    let selector = PrApiSelector::from_pr_ref(pr_ref)?;
+    let mut command = Command::new(&config.gh_bin);
+    command.arg("pr");
+    command.arg("merge");
+    command.arg(selector.number.to_string());
+    command.arg("--repo");
+    command.arg(repo);
+    command.arg("--auto");
+    command.arg("--squash");
+    if let Some((token, _)) = resolve_write_token(config).await? {
+        command.env("GH_TOKEN", token.expose_secret());
+    }
+    run_command(command, config.timeout, "gh-pr-merge-auto").await?;
+    Ok(())
 }
 
 async fn post_coderabbit_trigger(config: &RepoConfig, pr_ref: &str) -> Result<(), RepoError> {

@@ -421,12 +421,13 @@ async fn create_worktree(
     let branch = format!("task/{}", input.task_id);
 
     let fetch = maybe_fetch(&repo_path, state).await?;
-    // Prefer `origin/<trunk>` (latest fetched remote tip) when the fetch
-    // actually succeeded. Otherwise fall back to the local branch ref so
-    // worktree creation still succeeds for private repos with no working
-    // remote (jamboree before it's pushed, network outages, 404'd origin).
+    // Prefer `origin/<trunk>` (latest fetched remote tip) whenever it
+    // resolves — even when the most recent fetch was skipped via the
+    // staleness cache, an earlier fetch could have populated the ref. Only
+    // fall back to the local branch ref when origin/<trunk> doesn't exist
+    // (private repo with no working remote, network outage, 404'd origin).
     let remote_ref = format!("origin/{trunk_branch}");
-    let trunk_ref = if fetch.fetched && rev_parse(&repo_path, &remote_ref).await.is_ok() {
+    let trunk_ref = if rev_parse(&repo_path, &remote_ref).await.is_ok() {
         remote_ref
     } else {
         trunk_branch.clone()

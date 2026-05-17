@@ -1,0 +1,52 @@
+# CodeRabbit configuration for the Jamboree monorepo.
+#
+# Jamboree is fully agentic: every PR is opened by an orchestrator-spawned
+# Picker, and merges are auto-driven (no human reviewer in the loop). We need
+# CodeRabbit to act as the review gate — when CodeRabbit posts an APPROVED
+# review, GitHub's auto-merge fires and the change lands on main. When
+# CodeRabbit posts a CHANGES_REQUESTED or actionable comments, the
+# post-picker coordinator (jam-task-lifecycle) re-spawns the Picker with
+# the review feedback so it can address the comments and push follow-up
+# commits.
+#
+# Schema reference: https://docs.coderabbit.ai/getting-started/configure-coderabbit/
+
+language: en-US
+early_access: false
+
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+
+  # Critical: explicitly emit APPROVED reviews when CodeRabbit has no
+  # concerns. Without this CodeRabbit posts COMMENTED reviews (which don't
+  # satisfy GitHub's required-review-approval branch protection) and
+  # auto-merge stalls forever. The exact key is intentionally explicit
+  # because the default has flipped across CodeRabbit versions.
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    drafts: false
+
+  # Skip unactionable bot/dependabot PRs and tiny doc-only changes from
+  # the review queue so the orchestrator throughput isn't bottlenecked
+  # by CodeRabbit waking up.
+  path_filters:
+    - "!**/.coderabbit.yaml"
+
+chat:
+  auto_reply: true
+
+# Suggest fewer nits in agentic tasks; the Picker can't always action style
+# nits and we don't want to loop on them.
+tone_instructions: |
+  This repository is operated by an autonomous orchestrator. Every PR was
+  produced by a Picker agent, not a human. Prioritize correctness, safety,
+  and architectural-invariant violations over style or naming preferences.
+  When you have no substantive concerns, post an APPROVED review so the
+  PR can auto-merge. Use CHANGES_REQUESTED only for issues that meaningfully
+  affect runtime behavior, security, or the load-bearing principles called
+  out in CLAUDE.md / AGENTS.md.

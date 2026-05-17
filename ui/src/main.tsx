@@ -184,6 +184,11 @@ type PrRow = {
   ciStatus: string;
   review: string;
   updatedAt: Date;
+  /// Latest `picker.continuation-needed.attempt` seen for the task linked
+  /// to this PR. >= CONTINUATION_ATTEMPT_CAP (5) means the picker gave up.
+  continuationAttempt: number;
+  /// Latest `picker.continuation-needed.reason` for context in the UI.
+  continuationReason: string;
 };
 
 type QuotaSnapshot = {
@@ -906,6 +911,11 @@ function DashboardView(props: {
               <TaskTable rows={importantTasks(props.taskRows)} compact />
             </div>
           </Panel>
+          <Show when={props.prRows.some(prIsStuck)}>
+            <Panel title="PRs Needing Attention">
+              <StuckPrTable rows={props.prRows.filter(prIsStuck)} />
+            </Panel>
+          </Show>
           <Panel title="Pull Requests">
             <PrTable rows={props.prRows.slice(0, 8)} compact />
           </Panel>
@@ -1324,10 +1334,32 @@ function TasksView(props: {
   createTaskState: CreateTaskState;
   onCreateTaskState: (state: CreateTaskState) => void;
 }) {
+  const [showStale, setShowStale] = createSignal(false);
+  const visible = createMemo(() =>
+    showStale() ? props.rows : props.rows.filter((row) => !isStaleTask(row))
+  );
+  const hiddenCount = createMemo(() => props.rows.length - visible().length);
   return (
     <div class="min-w-0 grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
       <Panel title="Tasks">
-        <TaskTable rows={props.rows} />
+        <Show when={hiddenCount() > 0}>
+          <div class="flex items-center justify-between border-b border-[#ecebe3] px-4 py-2 text-xs text-[#62665e]">
+            <span>
+              {hiddenCount()} stale task{hiddenCount() === 1 ? "" : "s"} hidden
+              <span class="ml-1 text-[#9aa195]">
+                (failed/merged &gt; 24h or older than 7 days)
+              </span>
+            </span>
+            <button
+              type="button"
+              class="rounded-md border border-[#d7ddce] bg-white px-2 py-0.5 hover:bg-[#f1f4ec]"
+              onClick={() => setShowStale((v) => !v)}
+            >
+              {showStale() ? "Hide stale" : "Show all"}
+            </button>
+          </div>
+        </Show>
+        <TaskTable rows={visible()} />
       </Panel>
       <TaskComposer
         token={props.token}
@@ -1336,6 +1368,23 @@ function TasksView(props: {
       />
     </div>
   );
+}
+
+/// Treat a task as "stale" (auto-hidden from the full Tasks page) when it's
+/// terminal AND older than the per-status cutoff. The dashboard's Pipeline
+/// panel always uses `importantTasks` so live + recently-failed tasks still
+/// surface there; this only affects the long list view.
+function isStaleTask(row: TaskRow): boolean {
+  const ageMs = Date.now() - row.updatedAt.getTime();
+  const ONE_DAY = 24 * 60 * 60 * 1000;
+  const SEVEN_DAYS = 7 * ONE_DAY;
+  if (row.status === "failed" || row.status === "abandoned" || row.status === "merged") {
+    return ageMs > ONE_DAY;
+  }
+  // Older-than-7d catches "backlog" entries that never got picked up plus
+  // anything else that fell out of view. Active in-flight tasks should
+  // refresh their updated_at on every event, so they won't trip this.
+  return ageMs > SEVEN_DAYS;
 }
 
 function TaskDetailView(props: {
@@ -2620,6 +2669,50 @@ function TaskMetaCell(props: { label: string; value: string; muted?: boolean; li
   );
 }
 
+/**
+ * Compact panel for PRs that auto-merge can't drive forward on its own —
+ * either CI failed, CodeRabbit is at CHANGES_REQUESTED, or the picker's
+ * continuation loop hit the cap. Shown only when there's at least one
+ * stuck PR (the parent Show in DashboardView gates the whole panel).
+ */
+function StuckPrTable(props: { rows: PrRow[] }) {
+  const rows = createMemo(() =>
+    [...props.rows].sort((a, b) => b.continuationAttempt - a.continuationAttempt)
+  );
+  return (
+    <div class="divide-y divide-[#ecebe3] text-sm">
+      <For each={rows()}>
+        {(row) => {
+          const reason = () => {
+            if (row.continuationAttempt >= CONTINUATION_ATTEMPT_CAP) {
+              return `picker capped at ${row.continuationAttempt} attempts${
+                row.continuationReason ? ` (${row.continuationReason})` : ""
+              }`;
+            }
+            const ci = row.ciStatus.toLowerCase();
+            if (ci === "failure" || ci === "failed" || ci === "error") {
+              return `CI ${ci}`;
+            }
+            return row.continuationReason || "review pending";
+          };
+          return (
+            <article class="grid gap-1 px-4 py-3">
+              <div class="flex items-center justify-between gap-3">
+                <PrLink prRef={row.prRef} />
+                <span class="text-xs text-[#a02828]">{reason()}</span>
+              </div>
+              <div class="text-xs text-[#62665e]">
+                task {row.taskId} · attempt {row.continuationAttempt}/
+                {CONTINUATION_ATTEMPT_CAP} · CI {row.ciStatus} · {latestTime(row.updatedAt)}
+              </div>
+            </article>
+          );
+        }}
+      </For>
+    </div>
+  );
+}
+
 function PrTable(props: { rows: PrRow[]; compact?: boolean }) {
   const rows = createMemo(() => props.rows.slice(0, props.compact === true ? 8 : undefined));
   return (
@@ -3390,6 +3483,9 @@ function quotaRowsFromSnapshot(snapshot: QuotaSnapshot | null) {
 
 function prRowsFromEvents(events: BusEvent[]) {
   const rows = new Map<string, PrRow>();
+  // Build the continuation state map once per render rather than scanning
+  // events again inside the loop below — events list can be long.
+  const continuationByTask = continuationStateByTask(events);
   for (const event of [...events].reverse()) {
     const eventType = stringField(event.envelope, "event_type") ?? "";
     if (!eventType.startsWith("pr.")) {
@@ -3414,9 +3510,22 @@ function prRowsFromEvents(events: BusEvent[]) {
         eventType === "pr.review-received"
           ? reviewSummaryFromPayload(payload)
           : existing.review,
-      updatedAt: event.receivedAt
+      updatedAt: event.receivedAt,
+      continuationAttempt: existing.continuationAttempt,
+      continuationReason: existing.continuationReason
     };
     rows.set(prRef, next);
+  }
+  // Second pass: cross-reference task_id -> continuation telemetry so the
+  // dashboard's stuck-PR panel has the data it needs without each row
+  // re-scanning events.
+  for (const row of rows.values()) {
+    if (row.taskId === "-" || row.taskId === "") continue;
+    const cont = continuationByTask.get(row.taskId);
+    if (cont) {
+      row.continuationAttempt = cont.attempt;
+      row.continuationReason = cont.reason;
+    }
   }
   return [...rows.values()].sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime());
 }
@@ -3513,8 +3622,51 @@ function emptyPrRow(prRef: string, updatedAt: Date): PrRow {
     status: "unknown",
     ciStatus: "unknown",
     review: "-",
-    updatedAt
+    updatedAt,
+    continuationAttempt: 0,
+    continuationReason: ""
   };
+}
+
+/// Per-task continuation telemetry derived from `picker.continuation-needed`
+/// events. Indexed by task_id (not PR ref) since continuations may fire
+/// before a PR exists.
+function continuationStateByTask(events: BusEvent[]) {
+  const state = new Map<string, { attempt: number; reason: string }>();
+  for (const event of [...events].reverse()) {
+    const eventType = stringField(event.envelope, "event_type");
+    if (eventType !== "picker.continuation-needed") {
+      continue;
+    }
+    const payload = objectField(event.envelope, "payload");
+    const taskId = stringField(payload, "task_id");
+    if (!taskId) continue;
+    const attempt = numberField(payload, "attempt") ?? 0;
+    const reason = stringField(payload, "reason") ?? "";
+    const cur = state.get(taskId);
+    // Keep the highest-attempt entry — events are streamed reverse-chrono so
+    // the first one we see for a task is the most recent.
+    if (!cur || attempt > cur.attempt) {
+      state.set(taskId, { attempt, reason });
+    }
+  }
+  return state;
+}
+
+/// Per-PR continuation cap — matches `jam-task-lifecycle::post_picker`'s
+/// `CONTINUATION_ATTEMPT_CAP`. Tasks at this count or above are stuck.
+const CONTINUATION_ATTEMPT_CAP = 5;
+
+/// True when this PR is open AND something is preventing auto-merge:
+///   - picker hit the continuation cap
+///   - CI is in a failure state
+///   - CodeRabbit posted CHANGES_REQUESTED that nobody has addressed yet
+function prIsStuck(row: PrRow): boolean {
+  if (!isOpenPrStatus(row.status)) return false;
+  if (row.continuationAttempt >= CONTINUATION_ATTEMPT_CAP) return true;
+  const ci = row.ciStatus.toLowerCase();
+  if (ci === "failure" || ci === "failed" || ci === "error") return true;
+  return false;
 }
 
 function isTaskEvent(eventType: string) {

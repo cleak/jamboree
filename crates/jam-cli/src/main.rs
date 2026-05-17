@@ -46,7 +46,13 @@ enum Command {
     Setup,
 
     /// Same checks as `jam setup`; informational anytime.
-    Doctor,
+    Doctor {
+        /// Fetch and rebase the local jamboree checkout onto origin. Passes
+        /// `--autostash` to git rebase, so uncommitted edits are stashed
+        /// before rebase and re-applied afterward.
+        #[arg(long)]
+        auto_rebase: bool,
+    },
 
     /// Spawn / list / show / cleanup tasks.
     Task {
@@ -363,7 +369,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
         Command::Setup => run_setup(),
-        Command::Doctor => run_doctor(),
+        Command::Doctor { auto_rebase } => run_doctor(auto_rebase),
         Command::Task { action } => run_task(action),
         Command::Trace { action } => run_trace(action),
         Command::Quota { action } => run_quota(action),
@@ -403,9 +409,44 @@ fn run_setup() -> ExitCode {
     }
 }
 
-fn run_doctor() -> ExitCode {
+fn run_doctor(auto_rebase: bool) -> ExitCode {
+    if auto_rebase {
+        if let Err(err) = run_jamboree_auto_rebase() {
+            eprintln!("\x1b[33m!\x1b[0m auto-rebase: {err}");
+        }
+    }
     print_header("jam doctor — environment health");
     print_run_outcomes(false)
+}
+
+/// Fetch and rebase `/home/caleb/jamboree` onto origin so the local tree
+/// catches up with auto-merged PRs. Idempotent — no-op when the tree is
+/// already current. Uses `--autostash` to keep dirty edits intact.
+///
+/// This is the explicit-opt-in counterpart to `JamboreeCheckoutFreshCheck`'s
+/// warning: the check tells you you're behind; this fixes it.
+fn run_jamboree_auto_rebase() -> Result<(), String> {
+    let repo = "/home/caleb/jamboree";
+    eprintln!("auto-rebase: fetching origin in {repo}…");
+    let fetch = ProcessCommand::new("git")
+        .args(["-C", repo, "fetch", "--prune", "--tags"])
+        .status()
+        .map_err(|err| format!("git fetch: {err}"))?;
+    if !fetch.success() {
+        return Err(format!("git fetch exited {}", fetch.code().unwrap_or(-1)));
+    }
+    let rebase = ProcessCommand::new("git")
+        .args(["-C", repo, "rebase", "--autostash", "@{u}"])
+        .status()
+        .map_err(|err| format!("git rebase: {err}"))?;
+    if !rebase.success() {
+        return Err(format!(
+            "git rebase --autostash @{{u}} exited {}; resolve manually",
+            rebase.code().unwrap_or(-1)
+        ));
+    }
+    eprintln!("auto-rebase: done");
+    Ok(())
 }
 
 fn print_header(title: &str) {

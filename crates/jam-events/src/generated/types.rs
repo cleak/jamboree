@@ -526,6 +526,22 @@ impl Event for PickerStalled {
     const EVENT_SUBTYPE_VERSION: u32 = 1;
 }
 
+/// pr-status-poller asked GitHub to rebase the PR's head branch onto its base because mergeable_state=behind blocked auto-merge.
+///
+/// Event type: `pr.branch-updated` (version 1).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrBranchUpdated {
+    pub pr_ref: String,
+    pub task_id: String,
+    pub head_sha: String,
+    pub requested_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl Event for PrBranchUpdated {
+    const EVENT_TYPE: &'static str = "pr.branch-updated";
+    const EVENT_SUBTYPE_VERSION: u32 = 1;
+}
+
 /// CI status flipped on a PR (running -> success/failure/cancelled).
 ///
 /// Event type: `pr.ci.status-changed` (version 1).

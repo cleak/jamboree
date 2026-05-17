@@ -1,22 +1,30 @@
 # process-compose.yaml — orchestrator service supervisor (spec §4.4.8).
 #
-# Canonical root-supervisor launch:
-#     sudo /opt/jam/bin/process-compose -U -u /home/maestro/.jam/process-compose.sock \
+# # Canonical launch (run as maestro, NOT root)
+#
+#     sudo -u maestro -H /opt/jam/bin/process-compose \
+#       -U -u /home/maestro/.jam/process-compose.sock \
 #       up -f /home/caleb/jamboree/process-compose.yaml -D -t=false
 #
-# Current active services are all `maestro`, so this workstation can also run
-# them without root sudo:
-#     sudo -u maestro -H /opt/jam/bin/process-compose -U -u /home/maestro/.jam/process-compose.sock \
+# The `user: <name>` directive on each service entry below is silently
+# ignored by process-compose v1.40.1 — every child inherits the launcher's
+# uid. Launching process-compose itself as `maestro` is the only reliable
+# way to keep services off the root account. Verified empirically on
+# 2026-05-16 (see `~/.claude/projects/-home-caleb-jamboree/memory/
+# project_process_compose_user_directive_bug.md`).
+#
+# Pickers are NOT long-running compose processes; jam-svc-session spawns
+# them as `picker` via `sudo -u picker` regardless of how this supervisor
+# was launched.
+#
+# # Legacy root launch (deprecated, kept for emergency manual recovery)
+#
+#     sudo /opt/jam/bin/process-compose -U -u /home/maestro/.jam/process-compose.sock \
 #       up -f /home/caleb/jamboree/process-compose.yaml -D -t=false
 #
 # Services that don't exist yet are commented out with `disabled: true`. As
 # crates land in Phase 0/1, uncomment them or change `disabled: true` to
 # `disabled: false`.
-#
-# Per security-setup.md §7.4: process-compose is launched as root via sudo,
-# and each subprocess declares `user: maestro` so GPG/pass/HOME resolution
-# naturally lands in the substrate account. Pickers are not long-running
-# compose processes; jam-svc-session spawns them as `picker`.
 
 version: "0.5"
 

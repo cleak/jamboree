@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
-# /opt/jam/sbin/jam-install-bin — root-installed wrapper invoked by caleb via
-# NOPASSWD sudo to install first-party binaries into /opt/jam/bin/.
+# /opt/jam/sbin/jam-install-bin — root-installed wrapper invoked by caleb or
+# maestro via NOPASSWD sudo to install first-party binaries into /opt/jam/bin/.
 #
-# Tightly scoped on purpose: validates that the source lives under the caleb
-# checkout's release-build dir and the dest is a bare `jam-*` filename in
-# /opt/jam/bin/. Cmnd_Alias JAM_INSTALL_BIN in /etc/sudoers.d/jam-users
-# whitelists this exact script.
+# Tightly scoped on purpose: validates that the source lives under one of a
+# small allowlist of staging roots and the dest is a bare `jam` or `jam-*`
+# filename in /opt/jam/bin/. Cmnd_Alias JAM_INSTALL_BIN in
+# /etc/sudoers.d/jam-users whitelists this exact script.
 #
-# Usage (as caleb):
+# Sources accepted:
+#   /home/caleb/jamboree/target/release/...   (interactive caleb builds)
+#   /home/maestro/.jam/staging/...            (patch-agent staging)
+#   /home/maestro/.jam/bin/...                (patch-agent runtime bin dir)
+#
+# Usage:
 #   sudo -n /opt/jam/sbin/jam-install-bin \
 #     /home/caleb/jamboree/target/release/jam-patch-agent \
 #     jam-patch-agent
@@ -21,14 +26,25 @@ fi
 
 SRC="$1"
 NAME="$2"
-SRC_ROOT="/home/caleb/jamboree/target/release"
+ALLOWED_SRC_ROOTS=(
+    "/home/caleb/jamboree/target/release"
+    "/home/maestro/.jam/staging"
+    "/home/maestro/.jam/bin"
+)
 DEST_ROOT="/opt/jam/bin"
 
 # Reject path components that could allow escaping the source root.
-case "$SRC" in
-    "$SRC_ROOT"/*) ;;
-    *) printf 'jam-install-bin: source must be under %s\n' "$SRC_ROOT" >&2; exit 65 ;;
-esac
+src_ok=0
+for root in "${ALLOWED_SRC_ROOTS[@]}"; do
+    case "$SRC" in
+        "$root"/*) src_ok=1; break ;;
+    esac
+done
+if [[ "$src_ok" -ne 1 ]]; then
+    printf 'jam-install-bin: source must be under one of:\n' >&2
+    printf '  %s\n' "${ALLOWED_SRC_ROOTS[@]}" >&2
+    exit 65
+fi
 case "$SRC" in
     *..*|*/./*|*$'\n'*|*$'\t'*)
         printf 'jam-install-bin: source path has forbidden components\n' >&2

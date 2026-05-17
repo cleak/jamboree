@@ -253,6 +253,16 @@ fields = [
     { name = "changed_at", type = "datetime", required = true },
 ]
 
+[events."pr.branch-updated"]
+version = 1
+description = "pr-status-poller asked GitHub to rebase the PR's head branch onto its base because mergeable_state=behind blocked auto-merge."
+fields = [
+    { name = "pr_ref",       type = "string",   required = true },
+    { name = "task_id",      type = "string",   required = true },
+    { name = "head_sha",     type = "string",   required = true },  # head_sha that was behind; deduplicates retries
+    { name = "requested_at", type = "datetime", required = true },
+]
+
 [events."pr.merged"]
 version = 1
 description = "PR merged via GitHub UI (the only merge path — see principle-no-auto-merge)."

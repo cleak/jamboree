@@ -518,8 +518,28 @@ fn run_pre_checks(event: &ExitedEvent) -> CheckOutcome {
         };
     };
 
+    // 5. Title shape — conventional-commits via the shared validator.
+    //    `[jam] ` prefix is allowed; jam-svc-repo adds it unconditionally.
+    //
+    //    The validator's message is intentionally NOT embedded in the
+    //    detail: the title comes from `.jam/pr-title.txt` written by the
+    //    picker — untrusted content per principle §2.7 — and detail flows
+    //    into the resume-picker prompt verbatim. Use a fixed string and
+    //    let the prompt template explain the expected shape.
+    let trimmed_title = title.trim().to_owned();
+    if let jam_tools_core::pr_title::PrTitleVerdict::Invalid(_) =
+        jam_tools_core::pr_title::validate_pr_title(&trimmed_title)
+    {
+        return CheckOutcome::NeedsContinuation {
+            reason: "invalid-pr-title",
+            detail:
+                ".jam/pr-title.txt is not conventional-commit shape (`<type>(<scope>)?: <subject>`)"
+                    .into(),
+        };
+    }
+
     CheckOutcome::Ready {
-        title: title.trim().to_owned(),
+        title: trimmed_title,
         body,
     }
 }
@@ -762,6 +782,7 @@ fn draft_continuation_prompt(reason: &str, detail: &str, event: &ExitedEvent) ->
         "no-commits" => "Make the code changes the task requires, commit them on this branch, write `.jam/pr-title.txt` and `.jam/pr-body.md`, then exit.",
         "dirty-tree" => "Commit (or revert) the listed pending changes so the working tree is clean. Then exit.",
         "missing-pr-metadata" => "Write `.jam/pr-title.txt` (one-line conventional-commit title) and `.jam/pr-body.md` (Summary + Verification sections) describing the existing commit(s). Do NOT amend commits or push. Then exit.",
+        "invalid-pr-title" => "Rewrite `.jam/pr-title.txt` in conventional-commit shape: `<type>(<scope>)?: <subject>`. Allowed types include feat, fix, refactor, docs, test, chore, ops. Example: `feat(jam-svc-repo): add update-branch retry`. Then exit.",
         "picker-failed" => "Diagnose why the previous session exited non-zero and fix the root cause. Commit, write `.jam/pr-*` metadata, exit.",
         "worktree-missing" => "Re-create the worktree (the orchestrator may need to intervene). Notify the human.",
         _ => "Address the issue above and exit cleanly.",

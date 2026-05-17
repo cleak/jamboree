@@ -17,7 +17,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 use clap::Parser;
 use futures::StreamExt;
 use jam_events::generated::{
-    Event, PrCiStatusChanged, PrMerged, PrReviewReceived, PrStatusChanged,
+    Event, PrBranchUpdated, PrCiStatusChanged, PrMerged, PrReviewReceived, PrStatusChanged,
 };
 use jam_events::EventEnvelope;
 use jam_nats::async_nats;
@@ -449,6 +449,22 @@ impl Poller {
                     self.records.remove(&pr_ref);
                 }
             }
+            "pr.branch-updated" => {
+                // Rehydrate the dedupe key on restart. Without this, every
+                // poller restart re-fires `update-branch` once per active
+                // PR even when GitHub already received the call before
+                // shutdown. With dozens of long-lived PRs that's wasteful
+                // and noisy.
+                let Some(pr_ref) = value_string(&envelope.payload, "pr_ref") else {
+                    return;
+                };
+                let Some(head_sha) = value_string(&envelope.payload, "head_sha") else {
+                    return;
+                };
+                if let Some(record) = self.records.get_mut(&pr_ref) {
+                    record.last_update_branch_head = Some(head_sha);
+                }
+            }
             _ => {}
         }
     }
@@ -654,6 +670,74 @@ impl Poller {
             }
         }
         record.last_review_count = Some(review_count);
+
+        // Auto-rebase BEHIND PRs once per head_sha. GitHub's auto-merge
+        // doesn't fire while mergeable_state=behind; we have to call
+        // `PUT /pulls/{n}/update-branch` to kick a merge of base into
+        // head. Once that completes (asynchronously on GitHub's side)
+        // the next poll either sees a new head_sha (we'll re-arm if we
+        // somehow fall behind again) or mergeable_state=clean and
+        // auto-merge fires.
+        //
+        // Dedupe on head_sha so we don't pile multiple update-branch
+        // calls on the same revision while GitHub is busy.
+        if snapshot.is_behind()
+            && !snapshot.merged
+            && snapshot.state == "open"
+            && !snapshot.draft
+            && record.last_update_branch_head.as_deref() != Some(&snapshot.head_sha)
+        {
+            match update_branch(&self.config, &record.repo, record.number).await {
+                Ok(UpdateBranchOutcome::Started) => {
+                    record.last_update_branch_head = Some(snapshot.head_sha.clone());
+                    let ctx = TraceCtx::new_root(
+                        "pr-poller.branch-updated",
+                        format!(
+                            "{} update-branch requested for {}",
+                            record.pr_ref, snapshot.head_sha
+                        ),
+                    );
+                    let payload = PrBranchUpdated {
+                        pr_ref: record.pr_ref.clone(),
+                        task_id: record.task_id.clone(),
+                        head_sha: snapshot.head_sha.clone(),
+                        requested_at: now,
+                    };
+                    publish_journal_event(nats, payload, &ctx).await?;
+                    record.last_activity_at = now;
+                }
+                Ok(UpdateBranchOutcome::Permanent(detail)) => {
+                    // PR closed, not mergeable, no permission, etc. Mark
+                    // the sha as "attempted" so we don't spam the call
+                    // every poll. The next time the picker pushes a new
+                    // sha we'll try once on that one.
+                    record.last_update_branch_head = Some(snapshot.head_sha.clone());
+                    warn!(
+                        pr_ref = %record.pr_ref,
+                        head_sha = %snapshot.head_sha,
+                        detail = %detail,
+                        "update-branch returned a permanent failure; will not retry for this head_sha",
+                    );
+                }
+                Ok(UpdateBranchOutcome::Transient(detail)) => {
+                    info!(
+                        pr_ref = %record.pr_ref,
+                        head_sha = %snapshot.head_sha,
+                        detail = %detail,
+                        "update-branch returned a transient failure; will retry on next poll",
+                    );
+                }
+                Err(err) => {
+                    warn!(
+                        pr_ref = %record.pr_ref,
+                        head_sha = %snapshot.head_sha,
+                        error = %err,
+                        "update-branch CLI invocation failed; will retry on next poll",
+                    );
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -742,6 +826,11 @@ struct ActivePr {
     next_poll_at: DateTime<Utc>,
     polls_total: u64,
     not_modified_total: u64,
+    /// `head_sha` we last triggered `pulls/{n}/update-branch` for. Dedupes
+    /// the rebase nudge so we don't fire it repeatedly while GitHub is
+    /// rebasing (the call returns 202 the first time, then mergeable_state
+    /// stays "behind" for a few seconds until the merge ref refreshes).
+    last_update_branch_head: Option<String>,
 }
 
 impl ActivePr {
@@ -767,6 +856,7 @@ impl ActivePr {
             next_poll_at: Utc::now(),
             polls_total: 0,
             not_modified_total: 0,
+            last_update_branch_head: None,
         })
     }
 
@@ -901,6 +991,79 @@ async fn gh_api_pull(
     Ok(response)
 }
 
+/// Outcome of an `update-branch` call. Lets the poller distinguish between
+/// "try again next tick" (transient) and "stop retrying" (permanent) so
+/// permanent failures don't loop forever.
+#[derive(Debug)]
+enum UpdateBranchOutcome {
+    /// HTTP 2xx — GitHub started the rebase. Subsequent polls will see
+    /// either a new head_sha (the rebase completed) or `mergeable_state`
+    /// flip away from "behind".
+    Started,
+    /// HTTP 422, 404, 403 etc. — the PR or repo is in a state where
+    /// update-branch will never succeed (PR closed, not mergeable, no
+    /// permission). Caller should stop retrying for this head_sha.
+    Permanent(String),
+    /// Transient (5xx, network, timeout) — retry on the next poll.
+    Transient(String),
+}
+
+/// Ask GitHub to update the PR's head branch by merging the latest base into
+/// it. Idempotent on GitHub's side. Returns the structured outcome so the
+/// caller can decide whether to retry or back off.
+async fn update_branch(
+    config: &Config,
+    repo: &str,
+    number: u64,
+) -> Result<UpdateBranchOutcome, PollerError> {
+    let endpoint = format!("repos/{repo}/pulls/{number}/update-branch");
+    let mut command = Command::new(&config.gh_bin);
+    // `-i` captures the response status line so we can classify by HTTP
+    // code rather than just "gh exit zero / non-zero". gh sets non-zero
+    // exit on any HTTP error, but doesn't differentiate.
+    command
+        .arg("api")
+        .arg("-i")
+        .arg(&endpoint)
+        .arg("--method")
+        .arg("PUT")
+        .arg("-H")
+        .arg("Accept: application/vnd.github+json");
+    // update-branch requires `Pull requests: write`. The GitHub App
+    // installation token already has that scope in our setup, and the
+    // poller never holds a user token. If the App auth isn't configured,
+    // fall through unauthenticated — the gh CLI's $GH_TOKEN from the
+    // env will pick up whatever's there.
+    if let Some(token) = github_app_installation_token(config).await? {
+        command.env("GH_TOKEN", token.expose_secret());
+    }
+    let output = command
+        .output()
+        .await
+        .map_err(|err| PollerError::GitHub(format!("{endpoint}: {err}")))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if output.status.success() {
+        return Ok(UpdateBranchOutcome::Started);
+    }
+    // Classify by HTTP status code in the response headers. 4xx (except
+    // 429) is permanent; 5xx and unknown are transient.
+    let status_code = parse_gh_api_response(&stdout)
+        .map(|r| r.status_code)
+        .unwrap_or(0);
+    let detail = format!(
+        "{endpoint}: HTTP {status_code} (exit {}): {}",
+        output.status.code().unwrap_or(-1),
+        stderr.trim()
+    );
+    let permanent = matches!(status_code, 400..=428 | 430..=499);
+    if permanent {
+        Ok(UpdateBranchOutcome::Permanent(detail))
+    } else {
+        Ok(UpdateBranchOutcome::Transient(detail))
+    }
+}
+
 async fn gh_api_json<T>(config: &Config, endpoint: &str) -> Result<T, PollerError>
 where
     T: for<'de> Deserialize<'de>,
@@ -987,6 +1150,11 @@ struct PullSnapshot {
     head_sha: String,
     comments: u32,
     review_comments: u32,
+    /// GitHub's `mergeable_state` ("clean", "behind", "blocked", "dirty",
+    /// "draft", "unknown", "unstable"). We act on "behind" — the PR's head
+    /// branch is out of date with its base — by calling update-branch so
+    /// auto-merge can fire once the rebase + CI complete.
+    mergeable_state: Option<String>,
 }
 
 impl PullSnapshot {
@@ -1003,11 +1171,19 @@ impl PullSnapshot {
             head_sha: response.head.sha,
             comments: response.comments,
             review_comments: response.review_comments,
+            mergeable_state: response.mergeable_state.map(|s| s.to_ascii_lowercase()),
         })
     }
 
     fn review_artifact_count(&self) -> u32 {
         self.comments.saturating_add(self.review_comments)
+    }
+
+    /// True when GitHub reports the PR's head branch is behind its base.
+    /// auto-merge can't fire in this state; calling update-branch puts the
+    /// PR back into a mergeable state once the rebase + CI complete.
+    fn is_behind(&self) -> bool {
+        self.mergeable_state.as_deref() == Some("behind")
     }
 }
 
@@ -1026,6 +1202,8 @@ struct PullApiResponse {
     comments: u32,
     #[serde(default)]
     review_comments: u32,
+    #[serde(default)]
+    mergeable_state: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1188,6 +1366,77 @@ where
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn pull_snapshot_is_behind_when_mergeable_state_behind() {
+        let value: serde_json::Value = serde_json::from_str(
+            r#"{
+                "state": "open", "draft": false, "merged": false,
+                "updated_at": "2026-05-17T00:00:00Z",
+                "head": {"sha": "abc"},
+                "mergeable_state": "behind"
+            }"#,
+        )
+        .unwrap();
+        let snap = PullSnapshot::from_value(value).unwrap();
+        assert!(snap.is_behind());
+        assert_eq!(snap.head_sha, "abc");
+    }
+
+    #[test]
+    fn pull_snapshot_is_not_behind_for_clean_state() {
+        for state in ["clean", "blocked", "dirty", "unknown", "unstable", "draft"] {
+            let value: serde_json::Value = serde_json::from_str(&format!(
+                r#"{{
+                    "state": "open", "draft": false, "merged": false,
+                    "updated_at": "2026-05-17T00:00:00Z",
+                    "head": {{"sha": "abc"}},
+                    "mergeable_state": "{state}"
+                }}"#
+            ))
+            .unwrap();
+            let snap = PullSnapshot::from_value(value).unwrap();
+            assert!(!snap.is_behind(), "state={state}");
+        }
+    }
+
+    #[test]
+    fn pull_snapshot_handles_missing_mergeable_state() {
+        // Older GitHub Enterprise versions or certain edge cases omit the
+        // field entirely; default to "not behind" so we don't fire
+        // update-branch with an unknown view of the PR.
+        let value: serde_json::Value = serde_json::from_str(
+            r#"{
+                "state": "open", "draft": false, "merged": false,
+                "updated_at": "2026-05-17T00:00:00Z",
+                "head": {"sha": "abc"}
+            }"#,
+        )
+        .unwrap();
+        let snap = PullSnapshot::from_value(value).unwrap();
+        assert!(!snap.is_behind());
+    }
+
+    #[test]
+    fn classify_update_branch_response_codes() {
+        // Smoke-test the HTTP classification matchers used in the
+        // `update_branch` outcome arms. Permanent: 4xx except 429.
+        // Transient: 5xx, 429, network failures (mapped to status 0).
+        for code in [400u16, 401, 403, 404, 410, 422, 428, 451, 499] {
+            assert!(
+                matches!(code, 400..=428 | 430..=499),
+                "{code} should be permanent"
+            );
+        }
+        for code in [429u16, 500, 502, 503, 504] {
+            assert!(
+                !matches!(code, 400..=428 | 430..=499),
+                "{code} should be transient"
+            );
+        }
+        // 0 (couldn't parse status, e.g., network failure) is transient.
+        assert!(!matches!(0u16, 400..=428 | 430..=499));
+    }
 
     #[test]
     fn parses_gh_api_200_response() {

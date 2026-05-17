@@ -642,11 +642,18 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let script = root.join("fake-tempyr");
-        let state = root.join("attempts");
+        // Use a directory-as-counter scheme: each invocation creates a
+        // numbered subdir under `state/`, then counts how many exist. This
+        // avoids the read-then-write race the previous in-place rewrite had
+        // (which intermittently flaked on CI runners where the kernel
+        // hadn't flushed the truncate before the next subprocess opened
+        // the file). `mkdir` is atomic; the count derived from it is a
+        // strict monotonic clock for "how many invocations so far".
+        let state_dir = root.join("attempts.d");
         let body = if succeed_second {
             format!(
-                "#!/bin/sh\nn=$(cat {state} 2>/dev/null || printf 0)\nn=$((n + 1))\nprintf '%s' \"$n\" > {state}\nif [ \"$n\" -lt 2 ]; then echo 'fake tempyr failed' >&2; exit 1; fi\nexit 0\n",
-                state = state.display()
+                "#!/bin/sh\nset -e\nmkdir -p {state}\nmkdir -m 0700 {state}/$(date +%s%N).$$\nn=$(ls -1 {state} | wc -l)\nif [ \"$n\" -lt 2 ]; then echo \"fake tempyr failed (attempt $n)\" >&2; exit 1; fi\nexit 0\n",
+                state = state_dir.display()
             )
         } else {
             "#!/bin/sh\necho 'fake tempyr failed' >&2\nexit 1\n".into()

@@ -1,1 +1,1 @@
-Refresh jam-svc-worktree selftest noop marker
+Fix Jamboree post-picker PR base and refresh worktree marker

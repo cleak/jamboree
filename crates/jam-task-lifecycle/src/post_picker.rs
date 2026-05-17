@@ -6,6 +6,7 @@
 //! worktree with `.jam/pr-*` metadata + commits ahead of trunk is the
 //! signal that a Picker is ready to ship — not a Picker self-declaration.
 
+use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
@@ -251,8 +252,9 @@ pub async fn handle_continuation_needed(
     let attempt = envelope
         .payload
         .get("attempt")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as u32;
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or(0);
 
     if task_id.is_empty() || session_id.is_empty() || prompt.is_empty() {
         warn!("picker.continuation-needed payload missing required fields; ignoring");
@@ -376,7 +378,7 @@ pub async fn handle_picker_exited(nats: &JamNats, envelope: &JournalEnvelope, ct
 fn parse_exited(envelope: &JournalEnvelope) -> Option<ExitedEvent> {
     let task_id = envelope.payload.get("task_id")?.as_str()?.to_owned();
     let session_id = envelope.payload.get("session_id")?.as_str()?.to_owned();
-    let exit_code = envelope.payload.get("exit_code")?.as_u64()? as u32;
+    let exit_code = u32::try_from(envelope.payload.get("exit_code")?.as_u64()?).ok()?;
     // picker.exited doesn't carry worktree_path; derive from task_id using
     // the same convention as jam-svc-worktree.
     let worktree_root = std::env::var_os("JAM_WORKTREE_ROOT")
@@ -410,15 +412,8 @@ fn run_pre_checks(event: &ExitedEvent) -> CheckOutcome {
     // may be no `origin` at all. Try the configured remote ref first, then
     // common fallbacks, then the local branch. The first ref that resolves
     // is the trunk we count against.
-    let base = std::env::var(DEFAULT_BASE_ENV).unwrap_or_else(|_| DEFAULT_BASE.into());
-    let candidates = [
-        format!("origin/{base}"),
-        "origin/main".to_string(),
-        "origin/master".to_string(),
-        base.clone(),
-        "main".to_string(),
-        "master".to_string(),
-    ];
+    let base = configured_base_branch();
+    let candidates = trunk_ref_candidates(&base);
     // `-c safe.directory=*` bypasses git's "dubious ownership" guard for
     // this single invocation. The post-picker handler runs as root and
     // sudos to picker, but sudo's env_reset under `Defaults use_pty` leaves
@@ -456,11 +451,14 @@ fn run_pre_checks(event: &ExitedEvent) -> CheckOutcome {
     // (e.g. `master` on a main-only repo) would make `git rev-list` fatal
     // with "ambiguous argument"; we built `resolved_refs` to only contain
     // refs that probe-verified above.
-    let not_args: String = resolved_refs
-        .iter()
-        .filter(|r| *r != &base_ref)
-        .map(|r| format!(" --not {}", shell_quote(r)))
-        .collect();
+    let not_args =
+        resolved_refs
+            .iter()
+            .filter(|r| *r != &base_ref)
+            .fold(String::new(), |mut args, r| {
+                write!(args, " --not {}", shell_quote(r)).expect("writing to a String cannot fail");
+                args
+            });
     let ahead_cmd = format!(
         "cd {wt} && git -c safe.directory='*' rev-list --count HEAD --not {base_ref}{others} 2>/dev/null",
         wt = shell_quote(&wt),
@@ -586,7 +584,8 @@ async fn request_open_pr(
     body: &str,
     ctx: &TraceCtx,
 ) -> Result<String, String> {
-    let base = std::env::var(DEFAULT_BASE_ENV).unwrap_or_else(|_| DEFAULT_BASE.into());
+    let wt = event.worktree_path.to_string_lossy();
+    let base = resolve_open_pr_base(&wt);
     let payload = OpenPrRequest {
         task_id: &event.task_id,
         branch: &event.branch,
@@ -608,6 +607,49 @@ async fn request_open_pr(
     response
         .pr_ref
         .ok_or_else(|| "open-pr returned no pr_ref".into())
+}
+
+fn configured_base_branch() -> String {
+    std::env::var(DEFAULT_BASE_ENV).unwrap_or_else(|_| DEFAULT_BASE.into())
+}
+
+fn trunk_ref_candidates(base: &str) -> Vec<String> {
+    let mut candidates = Vec::new();
+    for candidate in [
+        format!("origin/{base}"),
+        "origin/main".to_string(),
+        "origin/master".to_string(),
+        base.to_string(),
+        "main".to_string(),
+        "master".to_string(),
+    ] {
+        if !candidates.contains(&candidate) {
+            candidates.push(candidate);
+        }
+    }
+    candidates
+}
+
+fn resolve_open_pr_base(worktree: &str) -> String {
+    let configured = configured_base_branch();
+    for candidate in trunk_ref_candidates(&configured) {
+        let cmd = format!(
+            "cd {wt} && git -c safe.directory='*' rev-parse --verify {ref_} >/dev/null && echo yes",
+            wt = shell_quote(worktree),
+            ref_ = shell_quote(&candidate),
+        );
+        if sudo_picker_check(&cmd).trim().eq_ignore_ascii_case("yes") {
+            return base_branch_from_ref(&candidate);
+        }
+    }
+    configured
+}
+
+fn base_branch_from_ref(ref_name: &str) -> String {
+    ref_name
+        .strip_prefix("origin/")
+        .unwrap_or(ref_name)
+        .to_string()
 }
 
 async fn publish_continuation(
@@ -789,6 +831,25 @@ mod tests {
         let t = truncate("0123456789ABCDEF", 5);
         assert!(t.starts_with("01234"));
         assert!(t.contains("truncated"));
+    }
+
+    #[test]
+    fn trunk_ref_candidates_try_configured_base_before_fallbacks() {
+        assert_eq!(
+            trunk_ref_candidates("master"),
+            vec![
+                "origin/master".to_string(),
+                "origin/main".to_string(),
+                "master".to_string(),
+                "main".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn base_branch_from_ref_strips_origin_prefix() {
+        assert_eq!(base_branch_from_ref("origin/main"), "main");
+        assert_eq!(base_branch_from_ref("master"), "master");
     }
 
     #[test]

@@ -38,7 +38,7 @@ const DEFAULT_JAMBOREE_REPO_PATH: &str = "/home/caleb/jamboree";
 const DEFAULT_WORKTREE_ROOT: &str = "/home/picker/workers";
 const DEFAULT_BLUEBERRY_TRUNK_BRANCH: &str = "main";
 const DEFAULT_JAMBOREE_TRUNK_BRANCH: &str = "main";
-const DEFAULT_FETCH_STALENESS_SECS: u64 = 60;
+const DEFAULT_FETCH_STALENESS_SECONDS: u64 = 60;
 const TASK_ID_MAX_LEN: usize = 128;
 const DEFAULT_PICKER_USER: &str = "picker";
 const DEFAULT_SUDO_BIN: &str = "sudo";
@@ -119,7 +119,7 @@ impl WorktreeConfig {
             .ok()
             .and_then(|raw| raw.parse().ok())
             .map_or(
-                Duration::from_secs(DEFAULT_FETCH_STALENESS_SECS),
+                Duration::from_secs(DEFAULT_FETCH_STALENESS_SECONDS),
                 Duration::from_secs,
             );
         let configure_picker_safe_directory = parse_bool_env("JAM_CONFIGURE_PICKER_SAFE_DIRECTORY")

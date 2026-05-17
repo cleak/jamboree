@@ -332,11 +332,18 @@ $HUMAN_USER ALL=($PICKER_USER) NOPASSWD: ALL
 # Required for harness adapters to spawn Pickers as picker
 $MAESTRO_USER ALL=($PICKER_USER) NOPASSWD: ALL
 
-# $HUMAN_USER -> root for installing first-party binaries into /opt/jam/bin/.
-# Tightly scoped via a path-validating wrapper that only accepts sources
-# under $HUMAN_USER's release-build dir and dest names matching jam-*.
+# $HUMAN_USER + $MAESTRO_USER -> root for installing first-party binaries
+# into /opt/jam/bin/. Tightly scoped via a path-validating wrapper that only
+# accepts sources under \$HUMAN_USER's release-build dir or maestro's staging
+# dirs, and dest names matching jam or jam-*.
+#
+# maestro needs this because patch-agent's CanonicalBinary deploy strategy
+# (e.g. \`jam deploy cli\`) writes /opt/jam/bin/jam, and patch-agent runs as
+# maestro under the recommended process-compose launch. Without this rule
+# every CLI self-update would fall back to a manual root install.
 Cmnd_Alias JAM_INSTALL_BIN = $JAM_INSTALL_BIN_DEST
-$HUMAN_USER ALL=(root) NOPASSWD: JAM_INSTALL_BIN
+$HUMAN_USER  ALL=(root) NOPASSWD: JAM_INSTALL_BIN
+$MAESTRO_USER ALL=(root) NOPASSWD: JAM_INSTALL_BIN
 
 # Allow these transitions to preserve specified env vars (trace IDs, secrets)
 # SETENV permits the caller to use sudo's -E or --preserve-env=KEY1,KEY2 flags

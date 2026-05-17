@@ -69,6 +69,55 @@ jobs:
       - name: Verify events.toml is in sync with generated files
         run: python3 tools/events-codegen.py --check
 
+  coderabbit-yaml:
+    name: coderabbit yaml schema
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Skip when .coderabbit.yaml absent
+        id: present
+        run: |
+          if [[ -f .coderabbit.yaml ]]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Python
+        if: steps.present.outputs.exists == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install validator deps
+        if: steps.present.outputs.exists == 'true'
+        run: pip install --quiet pyyaml jsonschema requests
+
+      # Validate .coderabbit.yaml against the published CodeRabbit JSON
+      # schema. Catches the failure mode where a picker edits the config and
+      # introduces a regression (CodeRabbit silently falls back to defaults
+      # then, which effectively turns off review on the next PR).
+      - name: Validate against CodeRabbit schema
+        if: steps.present.outputs.exists == 'true'
+        run: |
+          python3 - <<'PY'
+          import json, sys, yaml, requests
+          import jsonschema
+          schema = requests.get(
+              "https://coderabbit.ai/integrations/schema.v2.json",
+              timeout=30,
+          ).json()
+          with open(".coderabbit.yaml") as f:
+              cfg = yaml.safe_load(f)
+          try:
+              jsonschema.validate(cfg, schema)
+              print(".coderabbit.yaml validates against schema.v2")
+          except jsonschema.ValidationError as e:
+              print(f"ERROR: .coderabbit.yaml does not match schema.v2:\n  path: {'/'.join(map(str, e.absolute_path))}\n  msg:  {e.message}", file=sys.stderr)
+              sys.exit(1)
+          PY
+
   cargo-audit:
     name: cargo audit
     runs-on: ubuntu-latest

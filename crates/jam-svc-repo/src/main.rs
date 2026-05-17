@@ -1061,8 +1061,60 @@ async fn mark_review_artifact_handled(
     })?;
     validate_handled_status(&input.status)?;
     validate_comment_text(&input.reasoning)?;
-    ReviewArtifactId::parse(&input.artifact_id)?;
+    let artifact = ReviewArtifactId::parse(&input.artifact_id)?;
     let handled_at = Utc::now();
+
+    // For statuses that mean "this comment is dealt with", resolve the
+    // GitHub review thread so CodeRabbit's request_changes_workflow can flip
+    // the review back to APPROVED. Without this the picker addresses the
+    // comment locally but CodeRabbit keeps the PR at CHANGES_REQUESTED until
+    // the iteration cap fires.
+    //
+    // Open is the explicit re-open state — no GitHub call (un-resolving
+    // requires the thread to already be resolved, which it isn't in the
+    // common path; we just track it locally).
+    //
+    // IssueComment / Review artifacts aren't part of a review thread, so
+    // there's nothing to resolve — we still record the handled state for
+    // local audit.
+    if is_resolving_status(&input.status) {
+        if let ReviewArtifactId::ReviewComment {
+            selector,
+            comment_id,
+        } = &artifact
+        {
+            match find_review_thread_id_for_comment(&state.config, selector, *comment_id).await {
+                Ok(Some(thread_id)) => {
+                    if let Err(err) = resolve_review_thread(&state.config, &thread_id).await {
+                        warn!(
+                            artifact_id = %input.artifact_id,
+                            thread_id = %thread_id,
+                            error = %err,
+                            "resolveReviewThread failed; comment is recorded handled locally but the GitHub thread remains unresolved",
+                        );
+                    } else {
+                        info!(
+                            artifact_id = %input.artifact_id,
+                            thread_id = %thread_id,
+                            "resolved github review thread",
+                        );
+                    }
+                }
+                Ok(None) => {
+                    debug!(
+                        artifact_id = %input.artifact_id,
+                        "no review thread contains this comment id; nothing to resolve on GitHub",
+                    );
+                }
+                Err(err) => warn!(
+                    artifact_id = %input.artifact_id,
+                    error = %err,
+                    "lookup of github review thread failed; comment is recorded handled locally only",
+                ),
+            }
+        }
+    }
+
     let output = MarkReviewArtifactHandledOutput {
         artifact_id: input.artifact_id,
         status: input.status,
@@ -1081,6 +1133,13 @@ async fn mark_review_artifact_handled(
             )
         })?;
     Ok(output)
+}
+
+/// Map handled-status to "does this mean the underlying GitHub thread should
+/// be resolved?". Acknowledged/Addressed/Dismissed all indicate the picker
+/// is done with the comment; Open means it's still being worked.
+fn is_resolving_status(status: &str) -> bool {
+    matches!(status, "Acknowledged" | "Addressed" | "Dismissed")
 }
 
 async fn request_review(
@@ -1598,6 +1657,173 @@ async fn gh_api_post_body(
             "comp-jam-svc-repo",
         )
     })
+}
+
+/// Invoke a GraphQL query/mutation via `gh api graphql`. Uses the user-token
+/// when available (CodeRabbit's `request_changes_workflow` only flips
+/// APPROVED for user-resolved threads, not bot-resolved), falls back to
+/// installation token. The `vars` slice carries `key=value` pairs forwarded
+/// as `-F key=value` to the gh CLI.
+async fn gh_api_graphql(
+    config: &RepoConfig,
+    query: &str,
+    vars: &[(&str, &str)],
+) -> Result<serde_json::Value, RepoError> {
+    let mut command = Command::new(&config.gh_bin);
+    command.arg("api");
+    command.arg("graphql");
+    command.arg("-f");
+    command.arg(format!("query={query}"));
+    for (k, v) in vars {
+        command.arg("-F");
+        command.arg(format!("{k}={v}"));
+    }
+    if let Some((token, _)) = resolve_write_token(config).await? {
+        command.env("GH_TOKEN", token.expose_secret());
+    } else if let Some(token) = github_app_installation_token(config).await? {
+        command.env("GH_TOKEN", token.expose_secret());
+    }
+    let output = run_command(command, config.timeout, "gh-api-graphql").await?;
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|err| {
+        RepoError::protocol(
+            "gh-output-invalid",
+            format!("gh api graphql returned invalid JSON: {err}"),
+            "Upgrade gh or update jam-svc-repo's parser.",
+            "comp-jam-svc-repo",
+        )
+    })?;
+    // GraphQL "200 with errors" — fail loudly per §2.12 rather than silently
+    // dropping a resolve.
+    if let Some(errs) = value.get("errors").and_then(serde_json::Value::as_array) {
+        if !errs.is_empty() {
+            return Err(RepoError::protocol(
+                "gh-graphql-errors",
+                format!(
+                    "gh api graphql returned errors: {}",
+                    serde_json::to_string(errs).unwrap_or_default()
+                ),
+                "Inspect the GraphQL error and update the query or permissions.",
+                "comp-jam-svc-repo",
+            ));
+        }
+    }
+    Ok(value)
+}
+
+/// Find the PullRequestReviewThread node-id that contains the given REST
+/// review-comment id. Returns Ok(None) if the comment isn't part of any
+/// thread (e.g. an issue comment, or a thread that was deleted). Paginated;
+/// CodeRabbit PRs rarely hit more than one page.
+async fn find_review_thread_id_for_comment(
+    config: &RepoConfig,
+    selector: &PrApiSelector,
+    comment_id: u64,
+) -> Result<Option<String>, RepoError> {
+    const QUERY: &str = "
+        query($owner: String!, $repo: String!, $pr: Int!, $after: String) {
+          repository(owner: $owner, name: $repo) {
+            pullRequest(number: $pr) {
+              reviewThreads(first: 100, after: $after) {
+                pageInfo { hasNextPage endCursor }
+                nodes {
+                  id
+                  isResolved
+                  comments(first: 100) { nodes { databaseId } }
+                }
+              }
+            }
+          }
+        }
+    ";
+    let pr_str = selector.number.to_string();
+    let (owner, repo) = selector
+        .repo
+        .split_once('/')
+        .unwrap_or((&selector.repo, ""));
+    let mut after = String::new();
+    loop {
+        let mut vars: Vec<(&str, &str)> =
+            vec![("owner", owner), ("repo", repo), ("pr", pr_str.as_str())];
+        if !after.is_empty() {
+            vars.push(("after", after.as_str()));
+        }
+        let resp = gh_api_graphql(config, QUERY, &vars).await?;
+        let threads = resp
+            .pointer("/data/repository/pullRequest/reviewThreads")
+            .ok_or_else(|| {
+                RepoError::protocol(
+                    "gh-graphql-shape",
+                    "expected data.repository.pullRequest.reviewThreads in GraphQL response",
+                    "Verify the gh CLI version and the GraphQL schema.",
+                    "comp-jam-svc-repo",
+                )
+            })?;
+        if let Some(nodes) = threads.get("nodes").and_then(serde_json::Value::as_array) {
+            for thread in nodes {
+                let Some(comments) = thread
+                    .pointer("/comments/nodes")
+                    .and_then(serde_json::Value::as_array)
+                else {
+                    continue;
+                };
+                let contains = comments.iter().any(|c| {
+                    c.get("databaseId")
+                        .and_then(serde_json::Value::as_u64)
+                        .is_some_and(|id| id == comment_id)
+                });
+                if contains {
+                    return Ok(thread
+                        .get("id")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_owned));
+                }
+            }
+        }
+        let has_next = threads
+            .pointer("/pageInfo/hasNextPage")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        if !has_next {
+            return Ok(None);
+        }
+        let cursor = threads
+            .pointer("/pageInfo/endCursor")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        if cursor.is_empty() {
+            return Ok(None);
+        }
+        after = cursor;
+    }
+}
+
+/// Resolve the named PullRequestReviewThread (idempotent on GitHub's side:
+/// re-resolving an already-resolved thread is a no-op). With CodeRabbit's
+/// `request_changes_workflow=true`, this is what flips the review back to
+/// APPROVED once all threads are resolved.
+async fn resolve_review_thread(config: &RepoConfig, thread_id: &str) -> Result<(), RepoError> {
+    const MUTATION: &str = "
+        mutation($id: ID!) {
+          resolveReviewThread(input: {threadId: $id}) {
+            thread { id isResolved }
+          }
+        }
+    ";
+    let resp = gh_api_graphql(config, MUTATION, &[("id", thread_id)]).await?;
+    let resolved = resp
+        .pointer("/data/resolveReviewThread/thread/isResolved")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    if !resolved {
+        return Err(RepoError::protocol(
+            "gh-graphql-shape",
+            format!("resolveReviewThread did not return isResolved=true for {thread_id}"),
+            "Inspect the GraphQL response and update the mutation.",
+            "comp-jam-svc-repo",
+        ));
+    }
+    Ok(())
 }
 
 async fn run_codex_review(
@@ -2455,6 +2681,69 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
     use tokio::net::TcpListener;
+
+    #[test]
+    fn is_resolving_status_only_for_done_states() {
+        // Only "Acknowledged", "Addressed", "Dismissed" mean the picker is
+        // done with the comment. "Open" is the explicit re-open state and
+        // any unknown value is conservatively non-resolving — better to
+        // leave a thread open than auto-resolve incorrectly.
+        assert!(is_resolving_status("Acknowledged"));
+        assert!(is_resolving_status("Addressed"));
+        assert!(is_resolving_status("Dismissed"));
+        assert!(!is_resolving_status("Open"));
+        assert!(!is_resolving_status("acknowledged")); // case-sensitive
+        assert!(!is_resolving_status(""));
+        assert!(!is_resolving_status("Unknown"));
+    }
+
+    #[test]
+    fn finds_review_thread_id_in_graphql_response() {
+        // Direct parser-shape check — we don't shell out to `gh` here, just
+        // exercise the JSON walking logic find_review_thread_id_for_comment
+        // performs on a real GraphQL response. Synthesizes the inner
+        // `reviewThreads` block and asserts the thread containing
+        // databaseId=456 is the one returned.
+        let resp: serde_json::Value = serde_json::from_str(
+            r#"{
+                "data": {
+                    "repository": {
+                        "pullRequest": {
+                            "reviewThreads": {
+                                "pageInfo": {"hasNextPage": false, "endCursor": null},
+                                "nodes": [
+                                    {"id": "THREAD_A", "isResolved": false,
+                                     "comments": {"nodes": [{"databaseId": 123}]}},
+                                    {"id": "THREAD_B", "isResolved": false,
+                                     "comments": {"nodes": [{"databaseId": 456}, {"databaseId": 789}]}}
+                                ]
+                            }
+                        }
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+        let threads = resp
+            .pointer("/data/repository/pullRequest/reviewThreads")
+            .unwrap();
+        let nodes = threads.get("nodes").unwrap().as_array().unwrap();
+        let hit = nodes
+            .iter()
+            .find(|t| {
+                t.pointer("/comments/nodes")
+                    .and_then(serde_json::Value::as_array)
+                    .map(|cs| {
+                        cs.iter().any(|c| {
+                            c.get("databaseId").and_then(serde_json::Value::as_u64) == Some(456)
+                        })
+                    })
+                    .unwrap_or(false)
+            })
+            .and_then(|t| t.get("id"))
+            .and_then(serde_json::Value::as_str);
+        assert_eq!(hit, Some("THREAD_B"));
+    }
 
     #[test]
     fn parses_github_pr_url_to_ref() {

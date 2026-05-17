@@ -153,6 +153,7 @@ pub fn run_all_checks() -> Vec<CheckOutcome> {
         Box::new(MaestroPassStoreHasExpectedKeysCheck),
         Box::new(PickerSpawnSmokeTestCheck),
         Box::new(PickerCannotSudoCheck),
+        Box::new(JamboreeCheckoutFreshCheck),
     ];
     checks.iter().map(|c| c.run()).collect()
 }
@@ -1090,6 +1091,55 @@ impl Check for PickerCannotSudoCheck {
     }
 }
 
+/// Surface when the local jamboree checkout is behind origin/main. The
+/// agentic merge loop pushes commits to main asynchronously — without a
+/// nudge to pull, caleb's local tree drifts and new sessions start from
+/// stale source. Warn (not Fail) because being behind isn't broken, just
+/// out of date. `jam doctor --auto-rebase` (TODO once we add that flag)
+/// can run the fix automatically.
+pub struct JamboreeCheckoutFreshCheck;
+impl Check for JamboreeCheckoutFreshCheck {
+    fn run(&self) -> CheckOutcome {
+        let repo = "/home/caleb/jamboree";
+        // Skip silently if this isn't a git repo (test environments, etc.).
+        if !std::path::Path::new(repo).join(".git").exists() {
+            return CheckOutcome::skip(
+                "jamboree-checkout-fresh",
+                "no git repository at /home/caleb/jamboree; skipping freshness check",
+            );
+        }
+        let rev = match Command::new("git")
+            .args(["-C", repo, "rev-list", "--count", "HEAD..@{u}"])
+            .output()
+        {
+            Ok(out) if out.status.success() => {
+                String::from_utf8_lossy(&out.stdout).trim().to_owned()
+            }
+            Ok(_) | Err(_) => {
+                // No upstream configured, or git not available — informational only.
+                return CheckOutcome::skip(
+                    "jamboree-checkout-fresh",
+                    "could not compare local jamboree HEAD to origin (no upstream configured?)",
+                );
+            }
+        };
+        let behind: u32 = rev.parse().unwrap_or(0);
+        if behind == 0 {
+            return CheckOutcome::pass(
+                "jamboree-checkout-fresh",
+                "local jamboree HEAD is up to date with origin",
+            );
+        }
+        CheckOutcome::warn(
+            "jamboree-checkout-fresh",
+            format!("local jamboree HEAD is {behind} commit(s) behind origin"),
+            "Run `git -C /home/caleb/jamboree fetch && \
+             git -C /home/caleb/jamboree rebase --autostash @{u}` \
+             to pick up the latest auto-merged PRs.",
+        )
+    }
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────
 
 const EXPECTED_MAESTRO_PASS_KEYS: &[&str] = &[
@@ -1901,12 +1951,12 @@ mod tests {
     }
 
     #[test]
-    fn run_all_checks_returns_27_outcomes() {
+    fn run_all_checks_returns_28_outcomes() {
         let outcomes = run_all_checks();
         assert_eq!(
             outcomes.len(),
-            27,
-            "spec §11.4 (13) + security-setup §10 (11) + trace-gap + Phase 9 learned checks (2)"
+            28,
+            "spec §11.4 (13) + security-setup §10 (11) + trace-gap + Phase 9 learned checks (2) + jamboree-checkout-fresh"
         );
     }
 

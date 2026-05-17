@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jam-events:pr.branch-updated",
+  "title": "pr.branch-updated",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "pr_ref": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "head_sha": {
+      "type": "string"
+    },
+    "requested_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "description": "pr-status-poller asked GitHub to rebase the PR's head branch onto its base because mergeable_state=behind blocked auto-merge.",
+  "required": [
+    "pr_ref",
+    "task_id",
+    "head_sha",
+    "requested_at"
+  ]
+}

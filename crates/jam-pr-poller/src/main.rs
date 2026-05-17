@@ -17,7 +17,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 use clap::Parser;
 use futures::StreamExt;
 use jam_events::generated::{
-    Event, PrCiStatusChanged, PrMerged, PrReviewReceived, PrStatusChanged,
+    Event, PrBranchUpdated, PrCiStatusChanged, PrMerged, PrReviewReceived, PrStatusChanged,
 };
 use jam_events::EventEnvelope;
 use jam_nats::async_nats;
@@ -654,6 +654,53 @@ impl Poller {
             }
         }
         record.last_review_count = Some(review_count);
+
+        // Auto-rebase BEHIND PRs once per head_sha. GitHub's auto-merge
+        // doesn't fire while mergeable_state=behind; we have to call
+        // `PUT /pulls/{n}/update-branch` to kick a merge of base into
+        // head. Once that completes (asynchronously on GitHub's side)
+        // the next poll either sees a new head_sha (we'll re-arm if we
+        // somehow fall behind again) or mergeable_state=clean and
+        // auto-merge fires.
+        //
+        // Dedupe on head_sha so we don't pile multiple update-branch
+        // calls on the same revision while GitHub is busy.
+        if snapshot.is_behind()
+            && !snapshot.merged
+            && snapshot.state == "open"
+            && !snapshot.draft
+            && record.last_update_branch_head.as_deref() != Some(&snapshot.head_sha)
+        {
+            match update_branch(&self.config, &record.repo, record.number).await {
+                Ok(()) => {
+                    record.last_update_branch_head = Some(snapshot.head_sha.clone());
+                    let ctx = TraceCtx::new_root(
+                        "pr-poller.branch-updated",
+                        format!(
+                            "{} update-branch requested for {}",
+                            record.pr_ref, snapshot.head_sha
+                        ),
+                    );
+                    let payload = PrBranchUpdated {
+                        pr_ref: record.pr_ref.clone(),
+                        task_id: record.task_id.clone(),
+                        head_sha: snapshot.head_sha.clone(),
+                        requested_at: now,
+                    };
+                    publish_journal_event(nats, payload, &ctx).await?;
+                    record.last_activity_at = now;
+                }
+                Err(err) => {
+                    warn!(
+                        pr_ref = %record.pr_ref,
+                        head_sha = %snapshot.head_sha,
+                        error = %err,
+                        "update-branch failed; will retry on next poll",
+                    );
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -742,6 +789,11 @@ struct ActivePr {
     next_poll_at: DateTime<Utc>,
     polls_total: u64,
     not_modified_total: u64,
+    /// `head_sha` we last triggered `pulls/{n}/update-branch` for. Dedupes
+    /// the rebase nudge so we don't fire it repeatedly while GitHub is
+    /// rebasing (the call returns 202 the first time, then mergeable_state
+    /// stays "behind" for a few seconds until the merge ref refreshes).
+    last_update_branch_head: Option<String>,
 }
 
 impl ActivePr {
@@ -767,6 +819,7 @@ impl ActivePr {
             next_poll_at: Utc::now(),
             polls_total: 0,
             not_modified_total: 0,
+            last_update_branch_head: None,
         })
     }
 
@@ -901,6 +954,38 @@ async fn gh_api_pull(
     Ok(response)
 }
 
+/// Ask GitHub to update the PR's head branch by merging the latest base into
+/// it. Idempotent on GitHub's side; returns 202 on success, 422 if the PR is
+/// already up to date or not mergeable. We treat anything in [200,300) as
+/// success and surface other codes for the caller to log + retry next poll.
+async fn update_branch(config: &Config, repo: &str, number: u64) -> Result<(), PollerError> {
+    let endpoint = format!("repos/{repo}/pulls/{number}/update-branch");
+    let mut command = Command::new(&config.gh_bin);
+    command
+        .arg("api")
+        .arg(&endpoint)
+        .arg("--method")
+        .arg("PUT")
+        .arg("-H")
+        .arg("Accept: application/vnd.github+json");
+    // update-branch requires `Pull requests: write`. The GitHub App
+    // installation token already has that scope in our setup, and the
+    // poller never holds a user token. If the App auth isn't configured,
+    // fall through unauthenticated — the gh CLI's $GH_TOKEN from the
+    // env will pick up whatever's there.
+    if let Some(token) = github_app_installation_token(config).await? {
+        command.env("GH_TOKEN", token.expose_secret());
+    }
+    let output = command
+        .output()
+        .await
+        .map_err(|err| PollerError::GitHub(format!("{endpoint}: {err}")))?;
+    if !output.status.success() {
+        return Err(PollerError::GitHub(command_failure(&endpoint, &output)));
+    }
+    Ok(())
+}
+
 async fn gh_api_json<T>(config: &Config, endpoint: &str) -> Result<T, PollerError>
 where
     T: for<'de> Deserialize<'de>,
@@ -987,6 +1072,11 @@ struct PullSnapshot {
     head_sha: String,
     comments: u32,
     review_comments: u32,
+    /// GitHub's `mergeable_state` ("clean", "behind", "blocked", "dirty",
+    /// "draft", "unknown", "unstable"). We act on "behind" — the PR's head
+    /// branch is out of date with its base — by calling update-branch so
+    /// auto-merge can fire once the rebase + CI complete.
+    mergeable_state: Option<String>,
 }
 
 impl PullSnapshot {
@@ -1003,11 +1093,19 @@ impl PullSnapshot {
             head_sha: response.head.sha,
             comments: response.comments,
             review_comments: response.review_comments,
+            mergeable_state: response.mergeable_state.map(|s| s.to_ascii_lowercase()),
         })
     }
 
     fn review_artifact_count(&self) -> u32 {
         self.comments.saturating_add(self.review_comments)
+    }
+
+    /// True when GitHub reports the PR's head branch is behind its base.
+    /// auto-merge can't fire in this state; calling update-branch puts the
+    /// PR back into a mergeable state once the rebase + CI complete.
+    fn is_behind(&self) -> bool {
+        self.mergeable_state.as_deref() == Some("behind")
     }
 }
 
@@ -1026,6 +1124,8 @@ struct PullApiResponse {
     comments: u32,
     #[serde(default)]
     review_comments: u32,
+    #[serde(default)]
+    mergeable_state: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1188,6 +1288,56 @@ where
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn pull_snapshot_is_behind_when_mergeable_state_behind() {
+        let value: serde_json::Value = serde_json::from_str(
+            r#"{
+                "state": "open", "draft": false, "merged": false,
+                "updated_at": "2026-05-17T00:00:00Z",
+                "head": {"sha": "abc"},
+                "mergeable_state": "behind"
+            }"#,
+        )
+        .unwrap();
+        let snap = PullSnapshot::from_value(value).unwrap();
+        assert!(snap.is_behind());
+        assert_eq!(snap.head_sha, "abc");
+    }
+
+    #[test]
+    fn pull_snapshot_is_not_behind_for_clean_state() {
+        for state in ["clean", "blocked", "dirty", "unknown", "unstable", "draft"] {
+            let value: serde_json::Value = serde_json::from_str(&format!(
+                r#"{{
+                    "state": "open", "draft": false, "merged": false,
+                    "updated_at": "2026-05-17T00:00:00Z",
+                    "head": {{"sha": "abc"}},
+                    "mergeable_state": "{state}"
+                }}"#
+            ))
+            .unwrap();
+            let snap = PullSnapshot::from_value(value).unwrap();
+            assert!(!snap.is_behind(), "state={state}");
+        }
+    }
+
+    #[test]
+    fn pull_snapshot_handles_missing_mergeable_state() {
+        // Older GitHub Enterprise versions or certain edge cases omit the
+        // field entirely; default to "not behind" so we don't fire
+        // update-branch with an unknown view of the PR.
+        let value: serde_json::Value = serde_json::from_str(
+            r#"{
+                "state": "open", "draft": false, "merged": false,
+                "updated_at": "2026-05-17T00:00:00Z",
+                "head": {"sha": "abc"}
+            }"#,
+        )
+        .unwrap();
+        let snap = PullSnapshot::from_value(value).unwrap();
+        assert!(!snap.is_behind());
+    }
 
     #[test]
     fn parses_gh_api_200_response() {

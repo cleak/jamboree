@@ -1728,6 +1728,7 @@ dependencies = [
  "futures",
  "jam-events",
  "jam-nats",
+ "jam-tools-core",
  "jam-trace",
  "serde",
  "serde_json",

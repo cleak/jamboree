@@ -15,6 +15,10 @@ pub mod hashing;
 /// Registry of patchable Rust binaries (used by jam-cli and jam-patch-agent).
 pub mod deploy_targets;
 
+/// Conventional-commit PR title validation (shared between post-picker
+/// pre-checks and jam-svc-repo's open-pr tool).
+pub mod pr_title;
+
 /// Shared runtime path resolution helpers.
 pub mod paths;
 

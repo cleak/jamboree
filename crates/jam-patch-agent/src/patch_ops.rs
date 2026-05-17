@@ -369,7 +369,12 @@ pub async fn install_canonical_binary(
             request.expected_sha256, staged_sha
         ));
     }
-    install_via_atomic_rename(&request.staging_path, &request.dest_path)?;
+    // patch-agent may run as root (legacy process-compose launch) or maestro
+    // (recommended launch after the user: directive workaround). When the
+    // destination is root-owned and we aren't root, route through the
+    // /opt/jam/sbin/jam-install-bin wrapper — it's the only sanctioned path
+    // for non-root processes to write into /opt/jam/bin/.
+    install_canonical_binary_to(&request.staging_path, &request.dest_path)?;
     publish_confirmed(
         nats,
         &request.service,
@@ -406,6 +411,82 @@ async fn publish_confirmed(
     nats.publish_traced(PatchConfirmed::EVENT_TYPE, &envelope, trace_ctx)
         .await
         .map_err(|err| format!("publish patch.confirmed: {err}"))
+}
+
+/// Install a binary at `dest_path`. Direct atomic-rename when we have write
+/// access to the parent dir; via the `/opt/jam/sbin/jam-install-bin` wrapper
+/// (NOPASSWD-allowed via sudoers) otherwise.
+///
+/// This lets the patch-agent's CanonicalBinary strategy work whether the
+/// patch-agent is running as root (legacy launch) or as maestro (per the
+/// process-compose user: directive workaround). Without it, the CLI
+/// self-deploy path (`jam deploy cli` → write `/opt/jam/bin/jam`) breaks
+/// the moment we drop root.
+fn install_canonical_binary_to(staging: &Path, dest: &Path) -> Result<(), String> {
+    if can_write_parent(dest) {
+        return install_via_atomic_rename(staging, dest);
+    }
+    install_via_jam_install_bin(staging, dest)
+}
+
+#[cfg(unix)]
+fn can_write_parent(dest: &Path) -> bool {
+    let parent = match dest.parent() {
+        Some(p) => p,
+        None => return false,
+    };
+    // Probe by attempting to create a temp file. Cheaper than introspecting
+    // mode bits, and matches what `fs::rename` will actually try to do.
+    match tempfile::Builder::new()
+        .prefix(".jam-write-probe-")
+        .tempfile_in(parent)
+    {
+        Ok(tmp) => {
+            let _ = tmp.close();
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+#[cfg(not(unix))]
+fn can_write_parent(_dest: &Path) -> bool {
+    true
+}
+
+fn install_via_jam_install_bin(staging: &Path, dest: &Path) -> Result<(), String> {
+    // The wrapper accepts: <source-under-target/release> <bare-name>.
+    // We pass the staging path (which is the staged binary in maestro's
+    // staging dir) and the destination's file_name. The wrapper validates
+    // both and errors loudly if anything looks off.
+    //
+    // The wrapper currently rejects sources outside `target/release/` —
+    // staged binaries actually live in `~maestro/.jam/staging/` or
+    // `~maestro/.jam/bin/`, so we need to widen the wrapper at the same
+    // time. See scripts/jam-install-bin.
+    let staging_str = staging
+        .to_str()
+        .ok_or_else(|| format!("staging path is not valid UTF-8: {}", staging.display()))?;
+    let dest_name = dest
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| format!("dest path has no valid file name: {}", dest.display()))?;
+    let status = std::process::Command::new("/usr/bin/sudo")
+        .arg("-n")
+        .arg("/opt/jam/sbin/jam-install-bin")
+        .arg(staging_str)
+        .arg(dest_name)
+        .status()
+        .map_err(|err| format!("run sudo -n jam-install-bin: {err}"))?;
+    if !status.success() {
+        return Err(format!(
+            "sudo -n /opt/jam/sbin/jam-install-bin {staging_str} {dest_name} failed (exit {})",
+            status
+                .code()
+                .map_or_else(|| "signal".to_owned(), |c| c.to_string())
+        ));
+    }
+    Ok(())
 }
 
 fn run_external_cmd(bin: &str, args: &[&str]) -> Result<(), String> {

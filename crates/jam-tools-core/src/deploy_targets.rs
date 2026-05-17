@@ -192,14 +192,19 @@ pub const DEPLOY_TARGETS: &[DeployTarget] = &[
         },
     },
     // The `jam` CLI itself. Self-update target — drops a new binary at
-    // /opt/jam/bin/jam. No long-running process to restart.
+    // `~maestro/.jam/bin/jam`. install-substrate.sh creates a stable
+    // `/usr/local/bin/jam` symlink pointing at that path during one-time
+    // install (and a back-compat `/opt/jam/bin/jam` symlink for older
+    // callers). Writing to maestro's home means patch-agent (which runs
+    // as maestro post-systemd-switch) can self-update without sudo or
+    // the jam-install-bin wrapper.
     DeployTarget {
         short_name: "cli",
         crate_name: "jam-cli",
         binary_name: "jam",
         service_id: "jam-cli",
         strategy: DeployStrategy::CanonicalBinary {
-            dest_path: "/opt/jam/bin/jam",
+            dest_path: "/home/maestro/.jam/bin/jam",
         },
     },
 ];
@@ -293,6 +298,28 @@ mod tests {
             );
         };
         assert_eq!(process_name, "ui-server");
+    }
+
+    #[test]
+    fn cli_dest_lives_under_maestro_home() {
+        // The CLI deploy target must point at ~maestro/.jam/bin/jam so
+        // patch-agent (running as maestro after the systemd-launch
+        // switch) can self-update without sudo or the jam-install-bin
+        // wrapper. /usr/local/bin/jam and /opt/jam/bin/jam are symlinks
+        // pointing at this path, set up once by install-substrate.sh.
+        let target = find("cli").unwrap();
+        let DeployStrategy::CanonicalBinary { dest_path } = target.strategy else {
+            panic!(
+                "expected CanonicalBinary for cli, got {:?}",
+                target.strategy
+            );
+        };
+        assert!(
+            dest_path.starts_with("/home/maestro/"),
+            "cli dest_path {dest_path:?} must be under maestro's home so the CLI \
+             self-update path is sudo-free; update install-substrate.sh's symlinks \
+             to point at the new path if you really mean to move it"
+        );
     }
 
     #[test]

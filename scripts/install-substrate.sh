@@ -592,6 +592,57 @@ install_first_party_binaries() {
         run_cmd install -m 755 "$src" "$dest"
         pass "$bin installed at $dest"
     done
+
+    # The `jam` CLI's runtime home is ~maestro/.jam/bin/jam (so
+    # patch-agent — which runs as maestro — can self-update without sudo
+    # or the jam-install-bin wrapper). Seed it from the freshly built
+    # binary now, and create a stable /usr/local/bin/jam symlink so
+    # caleb's PATH picks it up without further config.
+    install_cli_canonical_paths
+}
+
+install_cli_canonical_paths() {
+    local maestro_bin="/home/$MAESTRO_USER/.jam/bin"
+    local maestro_jam="$maestro_bin/jam"
+    local stable_link="/usr/local/bin/jam"
+    local src="$REPO_ROOT/target/release/jam"
+
+    if [[ $DRY_RUN -eq 0 && ! -x "$src" ]]; then
+        die "Built jam binary missing: $src" \
+"    Re-run sudo ./scripts/install-substrate.sh after fixing the Rust build."
+    fi
+
+    run_cmd install -d -o "$MAESTRO_USER" -g "$MAESTRO_USER" -m 0755 "$maestro_bin"
+    run_cmd install -o "$MAESTRO_USER" -g "$MAESTRO_USER" -m 0755 "$src" "$maestro_jam"
+    pass "jam installed at $maestro_jam (maestro-owned)"
+
+    # /usr/local/bin/jam → ~maestro/.jam/bin/jam. Stable across CLI
+    # self-updates because the symlink target doesn't move.
+    install_jam_symlink "$stable_link" "$maestro_jam"
+    # /opt/jam/bin/jam → ~maestro/.jam/bin/jam. Back-compat: bootstrap
+    # scripts and older docs reference this path. Symlinking instead of
+    # leaving a stale binary in place keeps `$INSTALL_DIR/jam` current
+    # without needing patch-agent to write a second copy.
+    install_jam_symlink "$INSTALL_DIR/jam" "$maestro_jam"
+}
+
+install_jam_symlink() {
+    local link="$1"
+    local target="$2"
+    if [[ -L "$link" ]]; then
+        local existing
+        existing="$(readlink "$link" 2>/dev/null || true)"
+        if [[ "$existing" == "$target" ]]; then
+            pass "$link -> $target already correct"
+            return
+        fi
+    fi
+    if [[ $DRY_RUN -eq 1 ]]; then
+        printf "    [dry-run] would link %s -> %s\n" "$link" "$target"
+        return
+    fi
+    ln -sfn "$target" "$link"
+    pass "linked $link -> $target"
 }
 
 # ---------------------------------------------------------------------------
@@ -642,6 +693,22 @@ install_ui_bundle() {
 # ---------------------------------------------------------------------------
 # Maestro Python app
 # ---------------------------------------------------------------------------
+
+install_jam_service() {
+    # Delegate to scripts/install-jam-service.sh; we're already root here
+    # so the privilege check inside that script passes without prompting.
+    # Idempotent — no-op when the on-disk unit matches.
+    local installer="$REPO_ROOT/scripts/install-jam-service.sh"
+    if [[ ! -x "$installer" ]]; then
+        die "missing $installer" \
+"    Re-pull the monorepo or restore the script from git."
+    fi
+    if [[ $DRY_RUN -eq 1 ]]; then
+        run_cmd "$installer" --dry-run
+        return
+    fi
+    "$installer"
+}
 
 install_maestro_app() {
     info "Installing Maestro Python app at $MAESTRO_INSTALL_DIR"
@@ -861,6 +928,9 @@ main() {
 
     header "Install Maestro Python app"
     install_maestro_app
+
+    header "Install jam.service systemd unit"
+    install_jam_service
 
     header "Verify canonical Tempyr worktree"
     ensure_canonical_tempyr_worktree_registered

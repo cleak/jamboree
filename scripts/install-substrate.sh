@@ -592,6 +592,74 @@ install_first_party_binaries() {
         run_cmd install -m 755 "$src" "$dest"
         pass "$bin installed at $dest"
     done
+
+    # The `jam` CLI's runtime home is ~maestro/.jam/bin/jam (so
+    # patch-agent — which runs as maestro — can self-update without sudo
+    # or the jam-install-bin wrapper). Seed it from the freshly built
+    # binary now, and create a stable /usr/local/bin/jam symlink so
+    # caleb's PATH picks it up without further config.
+    install_cli_canonical_paths
+}
+
+install_cli_canonical_paths() {
+    # The CLI's runtime path is hardcoded in deploy_targets.rs:
+    #
+    #     CanonicalBinary { dest_path: "/home/maestro/.jam/bin/jam" }
+    #
+    # so this installer MUST seed exactly that path. Using
+    # /home/$MAESTRO_USER would diverge if MAESTRO_USER were overridden
+    # (e.g. for tests or alternate-user installs) and `jam deploy cli`
+    # would then write somewhere the symlinks don't point. Pin the
+    # canonical path explicitly; MAESTRO_USER is still the right value
+    # to pass to chown/chgrp for the file ownership.
+    local canonical_user="maestro"
+    local maestro_bin="/home/$canonical_user/.jam/bin"
+    local maestro_jam="$maestro_bin/jam"
+    local stable_link="/usr/local/bin/jam"
+    local src="$REPO_ROOT/target/release/jam"
+
+    if [[ "$MAESTRO_USER" != "$canonical_user" ]]; then
+        warn "MAESTRO_USER=$MAESTRO_USER differs from the canonical \"$canonical_user\""
+        warn "the CLI binary will land at $maestro_jam (matching deploy_targets.rs),"
+        warn "but ownership will be chowned to $MAESTRO_USER"
+    fi
+
+    if [[ $DRY_RUN -eq 0 && ! -x "$src" ]]; then
+        die "Built jam binary missing: $src" \
+"    Re-run sudo ./scripts/install-substrate.sh after fixing the Rust build."
+    fi
+
+    run_cmd install -d -o "$MAESTRO_USER" -g "$MAESTRO_USER" -m 0755 "$maestro_bin"
+    run_cmd install -o "$MAESTRO_USER" -g "$MAESTRO_USER" -m 0755 "$src" "$maestro_jam"
+    pass "jam installed at $maestro_jam (owned by $MAESTRO_USER)"
+
+    # /usr/local/bin/jam → ~maestro/.jam/bin/jam. Stable across CLI
+    # self-updates because the symlink target doesn't move.
+    install_jam_symlink "$stable_link" "$maestro_jam"
+    # /opt/jam/bin/jam → ~maestro/.jam/bin/jam. Back-compat: bootstrap
+    # scripts and older docs reference this path. Symlinking instead of
+    # leaving a stale binary in place keeps `$INSTALL_DIR/jam` current
+    # without needing patch-agent to write a second copy.
+    install_jam_symlink "$INSTALL_DIR/jam" "$maestro_jam"
+}
+
+install_jam_symlink() {
+    local link="$1"
+    local target="$2"
+    if [[ -L "$link" ]]; then
+        local existing
+        existing="$(readlink "$link" 2>/dev/null || true)"
+        if [[ "$existing" == "$target" ]]; then
+            pass "$link -> $target already correct"
+            return
+        fi
+    fi
+    if [[ $DRY_RUN -eq 1 ]]; then
+        printf "    [dry-run] would link %s -> %s\n" "$link" "$target"
+        return
+    fi
+    ln -sfn "$target" "$link"
+    pass "linked $link -> $target"
 }
 
 # ---------------------------------------------------------------------------
@@ -642,6 +710,22 @@ install_ui_bundle() {
 # ---------------------------------------------------------------------------
 # Maestro Python app
 # ---------------------------------------------------------------------------
+
+install_jam_service() {
+    # Delegate to scripts/install-jam-service.sh; we're already root here
+    # so the privilege check inside that script passes without prompting.
+    # Idempotent — no-op when the on-disk unit matches.
+    local installer="$REPO_ROOT/scripts/install-jam-service.sh"
+    if [[ ! -x "$installer" ]]; then
+        die "missing $installer" \
+"    Re-pull the monorepo or restore the script from git."
+    fi
+    if [[ $DRY_RUN -eq 1 ]]; then
+        run_cmd "$installer" --dry-run
+        return
+    fi
+    "$installer"
+}
 
 install_maestro_app() {
     info "Installing Maestro Python app at $MAESTRO_INSTALL_DIR"
@@ -861,6 +945,9 @@ main() {
 
     header "Install Maestro Python app"
     install_maestro_app
+
+    header "Install jam.service systemd unit"
+    install_jam_service
 
     header "Verify canonical Tempyr worktree"
     ensure_canonical_tempyr_worktree_registered

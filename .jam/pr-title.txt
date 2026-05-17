@@ -1,1 +1,1 @@
-Fix Jamboree post-picker PR base and refresh worktree marker
+Fix Jamboree post-picker PR routing and refresh worktree marker

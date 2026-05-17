@@ -91,6 +91,8 @@ struct OpenPrRequest<'a> {
     body: &'a str,
     draft: bool,
     base: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    repo: Option<&'a str>,
     worktree_path: &'a str,
     push: bool,
 }
@@ -586,6 +588,7 @@ async fn request_open_pr(
 ) -> Result<String, String> {
     let wt = event.worktree_path.to_string_lossy();
     let base = resolve_open_pr_base(&wt);
+    let repo = resolve_open_pr_repo(&wt);
     let payload = OpenPrRequest {
         task_id: &event.task_id,
         branch: &event.branch,
@@ -593,6 +596,7 @@ async fn request_open_pr(
         body,
         draft: false,
         base: &base,
+        repo: repo.as_deref(),
         worktree_path: &event.worktree_path.to_string_lossy(),
         push: true,
     };
@@ -643,6 +647,30 @@ fn resolve_open_pr_base(worktree: &str) -> String {
         }
     }
     configured
+}
+
+fn resolve_open_pr_repo(worktree: &str) -> Option<String> {
+    let cmd = format!(
+        "cd {wt} && git -c safe.directory='*' config --get remote.origin.url",
+        wt = shell_quote(worktree),
+    );
+    let remote = sudo_picker_check(&cmd);
+    github_repo_from_remote(remote.trim())
+}
+
+fn github_repo_from_remote(remote: &str) -> Option<String> {
+    let path = remote
+        .strip_prefix("https://github.com/")
+        .or_else(|| remote.strip_prefix("git@github.com:"))
+        .or_else(|| remote.strip_prefix("ssh://git@github.com/"))?;
+    let repo = path.strip_suffix(".git").unwrap_or(path);
+    let mut parts = repo.split('/');
+    let owner = parts.next()?;
+    let name = parts.next()?;
+    if owner.is_empty() || name.is_empty() || parts.next().is_some() {
+        return None;
+    }
+    Some(format!("{owner}/{name}"))
 }
 
 fn base_branch_from_ref(ref_name: &str) -> String {
@@ -850,6 +878,23 @@ mod tests {
     fn base_branch_from_ref_strips_origin_prefix() {
         assert_eq!(base_branch_from_ref("origin/main"), "main");
         assert_eq!(base_branch_from_ref("master"), "master");
+    }
+
+    #[test]
+    fn github_repo_from_remote_parses_github_urls() {
+        assert_eq!(
+            github_repo_from_remote("https://github.com/cleak/jamboree.git").as_deref(),
+            Some("cleak/jamboree")
+        );
+        assert_eq!(
+            github_repo_from_remote("git@github.com:cleak/blueberry.git").as_deref(),
+            Some("cleak/blueberry")
+        );
+        assert_eq!(
+            github_repo_from_remote("ssh://git@github.com/cleak/jamboree.git").as_deref(),
+            Some("cleak/jamboree")
+        );
+        assert_eq!(github_repo_from_remote("https://example.com/x/y.git"), None);
     }
 
     #[test]

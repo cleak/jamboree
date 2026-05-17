@@ -520,13 +520,21 @@ fn run_pre_checks(event: &ExitedEvent) -> CheckOutcome {
 
     // 5. Title shape — conventional-commits via the shared validator.
     //    `[jam] ` prefix is allowed; jam-svc-repo adds it unconditionally.
+    //
+    //    The validator's message is intentionally NOT embedded in the
+    //    detail: the title comes from `.jam/pr-title.txt` written by the
+    //    picker — untrusted content per principle §2.7 — and detail flows
+    //    into the resume-picker prompt verbatim. Use a fixed string and
+    //    let the prompt template explain the expected shape.
     let trimmed_title = title.trim().to_owned();
-    if let jam_tools_core::pr_title::PrTitleVerdict::Invalid(msg) =
+    if let jam_tools_core::pr_title::PrTitleVerdict::Invalid(_) =
         jam_tools_core::pr_title::validate_pr_title(&trimmed_title)
     {
         return CheckOutcome::NeedsContinuation {
             reason: "invalid-pr-title",
-            detail: format!("title in .jam/pr-title.txt is not conventional-commit shape: {msg}"),
+            detail:
+                ".jam/pr-title.txt is not conventional-commit shape (`<type>(<scope>)?: <subject>`)"
+                    .into(),
         };
     }
 

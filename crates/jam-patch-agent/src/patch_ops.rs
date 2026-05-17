@@ -458,12 +458,9 @@ fn install_via_jam_install_bin(staging: &Path, dest: &Path) -> Result<(), String
     // The wrapper accepts: <source-under-target/release> <bare-name>.
     // We pass the staging path (which is the staged binary in maestro's
     // staging dir) and the destination's file_name. The wrapper validates
-    // both and errors loudly if anything looks off.
-    //
-    // The wrapper currently rejects sources outside `target/release/` —
-    // staged binaries actually live in `~maestro/.jam/staging/` or
-    // `~maestro/.jam/bin/`, so we need to widen the wrapper at the same
-    // time. See scripts/jam-install-bin.
+    // both source-root membership (target/release, ~maestro/.jam/staging,
+    // ~maestro/.jam/bin) and dest-name shape (`jam` or `jam-*`), erroring
+    // loudly on anything off. See scripts/jam-install-bin.
     let staging_str = staging
         .to_str()
         .ok_or_else(|| format!("staging path is not valid UTF-8: {}", staging.display()))?;

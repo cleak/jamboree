@@ -47,9 +47,9 @@ enum Command {
 
     /// Same checks as `jam setup`; informational anytime.
     Doctor {
-        /// Fetch and rebase the local jamboree checkout onto origin/main if
-        /// the freshness check warns. Skips if the working tree is dirty
-        /// (passes `--autostash` to keep uncommitted edits).
+        /// Fetch and rebase the local jamboree checkout onto origin. Passes
+        /// `--autostash` to git rebase, so uncommitted edits are stashed
+        /// before rebase and re-applied afterward.
         #[arg(long)]
         auto_rebase: bool,
     },

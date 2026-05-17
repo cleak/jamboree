@@ -92,6 +92,10 @@ struct OpenPrRequest<'a> {
     base: &'a str,
     worktree_path: &'a str,
     push: bool,
+    /// `<owner>/<name>` override. Picked up by `jam-svc-repo`'s open_pr —
+    /// falls back to the service's configured `github_repo` when None.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    repo: Option<&'a str>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -586,7 +590,16 @@ async fn request_open_pr(
     body: &str,
     ctx: &TraceCtx,
 ) -> Result<String, String> {
-    let base = std::env::var(DEFAULT_BASE_ENV).unwrap_or_else(|_| DEFAULT_BASE.into());
+    // Read the GitHub repo and default branch from the picker worktree's
+    // git config so the open-pr request targets the right place per project
+    // without us having to thread `project` through picker.exited events.
+    // Blueberry pickers point at cleak/blueberry on master; Jamboree
+    // pickers point at cleak/jamboree on main. JAM_TRUNK_BRANCH is a final
+    // fallback when neither probe succeeds (test fixtures, fresh repos).
+    let wt = event.worktree_path.to_string_lossy().to_string();
+    let repo = derive_origin_repo(&wt);
+    let base = derive_default_branch(&wt)
+        .unwrap_or_else(|| std::env::var(DEFAULT_BASE_ENV).unwrap_or_else(|_| DEFAULT_BASE.into()));
     let payload = OpenPrRequest {
         task_id: &event.task_id,
         branch: &event.branch,
@@ -594,8 +607,9 @@ async fn request_open_pr(
         body,
         draft: false,
         base: &base,
-        worktree_path: &event.worktree_path.to_string_lossy(),
+        worktree_path: &wt,
         push: true,
+        repo: repo.as_deref(),
     };
     let subject = resolve_tool_subject(nats, REPO_SERVICE, OPEN_PR_METHOD).await;
     let response: OpenPrResponse = nats
@@ -608,6 +622,46 @@ async fn request_open_pr(
     response
         .pr_ref
         .ok_or_else(|| "open-pr returned no pr_ref".into())
+}
+
+/// Extract `<owner>/<name>` from the worktree's `origin` URL. Supports both
+/// HTTPS (`https://github.com/cleak/jamboree.git`) and SSH
+/// (`git@github.com:cleak/jamboree.git`) forms. Returns `None` if no remote
+/// is configured (private dev tree before push, or test fixture).
+fn derive_origin_repo(worktree: &str) -> Option<String> {
+    let cmd = format!(
+        "cd {wt} && git -c safe.directory='*' config --get remote.origin.url",
+        wt = shell_quote(worktree),
+    );
+    let url = sudo_picker_check(&cmd).trim().to_owned();
+    if url.is_empty() {
+        return None;
+    }
+    let trimmed = url.trim_end_matches(".git");
+    if let Some((_, rest)) = trimmed.split_once("github.com:") {
+        return Some(rest.to_owned());
+    }
+    if let Some((_, rest)) = trimmed.split_once("github.com/") {
+        return Some(rest.to_owned());
+    }
+    None
+}
+
+/// Read the worktree's tracked default branch (`refs/remotes/origin/HEAD`
+/// resolves to `refs/remotes/origin/<default>`). Project-agnostic — works
+/// for Blueberry (`master`) and Jamboree (`main`) and anything else.
+fn derive_default_branch(worktree: &str) -> Option<String> {
+    let cmd = format!(
+        "cd {wt} && git -c safe.directory='*' symbolic-ref --short refs/remotes/origin/HEAD",
+        wt = shell_quote(worktree),
+    );
+    let out = sudo_picker_check(&cmd).trim().to_owned();
+    if out.is_empty() {
+        return None;
+    }
+    // `git symbolic-ref --short refs/remotes/origin/HEAD` prints
+    // `origin/main` (or `origin/master`); strip the `origin/` prefix.
+    Some(out.trim_start_matches("origin/").to_owned())
 }
 
 async fn publish_continuation(

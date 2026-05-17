@@ -1423,10 +1423,16 @@ mod tests {
         // `update_branch` outcome arms. Permanent: 4xx except 429.
         // Transient: 5xx, 429, network failures (mapped to status 0).
         for code in [400u16, 401, 403, 404, 410, 422, 428, 451, 499] {
-            assert!(matches!(code, 400..=428 | 430..=499), "{code} should be permanent");
+            assert!(
+                matches!(code, 400..=428 | 430..=499),
+                "{code} should be permanent"
+            );
         }
         for code in [429u16, 500, 502, 503, 504] {
-            assert!(!matches!(code, 400..=428 | 430..=499), "{code} should be transient");
+            assert!(
+                !matches!(code, 400..=428 | 430..=499),
+                "{code} should be transient"
+            );
         }
         // 0 (couldn't parse status, e.g., network failure) is transient.
         assert!(!matches!(0u16, 400..=428 | 430..=499));

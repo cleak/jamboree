@@ -266,7 +266,14 @@ mod tests {
 
     #[test]
     fn tool_services_use_atomic_swap() {
-        for short in ["message", "observe", "repo", "session", "supervise", "worktree"] {
+        for short in [
+            "message",
+            "observe",
+            "repo",
+            "session",
+            "supervise",
+            "worktree",
+        ] {
             let target = find(short).unwrap();
             assert_eq!(
                 target.strategy,
@@ -280,7 +287,10 @@ mod tests {
     fn ui_server_uses_stop_replace_restart() {
         let target = find("ui-server").unwrap();
         let DeployStrategy::StopReplaceRestart { process_name } = target.strategy else {
-            panic!("expected StopReplaceRestart for ui-server, got {:?}", target.strategy);
+            panic!(
+                "expected StopReplaceRestart for ui-server, got {:?}",
+                target.strategy
+            );
         };
         assert_eq!(process_name, "ui-server");
     }

@@ -717,8 +717,7 @@ async fn open_pr(
         // Re-arm auto-merge in case it was disarmed by a previous force-push or
         // the PR was created externally. Cheap, idempotent on GitHub's side.
         if !existing.is_draft {
-            if let Err(err) =
-                gh_pr_enable_auto_merge(&state.config, &repo, &existing.pr_ref).await
+            if let Err(err) = gh_pr_enable_auto_merge(&state.config, &repo, &existing.pr_ref).await
             {
                 warn!(
                     pr_ref = %existing.pr_ref,
@@ -2876,14 +2875,11 @@ exit 1
 "#,
         );
 
-        let existing = gh_pr_lookup_by_branch(
-            &fixture.config(),
-            "cleak/blueberry",
-            "task/some-branch",
-        )
-        .await
-        .unwrap()
-        .expect("expected lookup to find an existing PR");
+        let existing =
+            gh_pr_lookup_by_branch(&fixture.config(), "cleak/blueberry", "task/some-branch")
+                .await
+                .unwrap()
+                .expect("expected lookup to find an existing PR");
         assert_eq!(existing.pr_ref, "cleak/blueberry#404");
         assert_eq!(existing.url, "https://github.com/cleak/blueberry/pull/404");
         assert_eq!(existing.state, "OPEN");
@@ -2905,13 +2901,10 @@ exit 1
 "#,
         );
 
-        let result = gh_pr_lookup_by_branch(
-            &fixture.config(),
-            "cleak/blueberry",
-            "task/no-such-branch",
-        )
-        .await
-        .unwrap();
+        let result =
+            gh_pr_lookup_by_branch(&fixture.config(), "cleak/blueberry", "task/no-such-branch")
+                .await
+                .unwrap();
         assert!(result.is_none());
     }
 

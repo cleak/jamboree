@@ -186,8 +186,13 @@ pub async fn apply_staged_patch(
     )
     .await?;
     let result = apply_staged_patch_locked(nats, &request).await;
-    let release =
-        release_patch_lock(nats, lock_revision, &request.requested_by, &request.trace_ctx).await;
+    let release = release_patch_lock(
+        nats,
+        lock_revision,
+        &request.requested_by,
+        &request.trace_ctx,
+    )
+    .await;
     finish_locked_patch_result(result, release)
 }
 
@@ -205,8 +210,13 @@ pub async fn perform_rollback(
     )
     .await?;
     let result = rollback_locked(nats, &request).await;
-    let release =
-        release_patch_lock(nats, lock_revision, &request.requested_by, &request.trace_ctx).await;
+    let release = release_patch_lock(
+        nats,
+        lock_revision,
+        &request.requested_by,
+        &request.trace_ctx,
+    )
+    .await;
     finish_locked_patch_result(result, release)
 }
 
@@ -280,10 +290,7 @@ pub async fn stop_replace_restart(
 /// `source_path` must be a directory containing `pyproject.toml`, `uv.lock`,
 /// and `src/`. Emits `patch.confirmed` once the restarted process is back
 /// to `Running`.
-pub async fn deploy_python_app(
-    nats: &JamNats,
-    request: PythonAppRequest,
-) -> Result<(), String> {
+pub async fn deploy_python_app(nats: &JamNats, request: PythonAppRequest) -> Result<(), String> {
     if !request.source_path.is_dir() {
         return Err(format!(
             "source path is not a directory: {}",
@@ -293,10 +300,7 @@ pub async fn deploy_python_app(
     for required in ["pyproject.toml", "uv.lock", "src"] {
         let child = request.source_path.join(required);
         if !child.exists() {
-            return Err(format!(
-                "source missing {required}: {}",
-                child.display()
-            ));
+            return Err(format!("source missing {required}: {}", child.display()));
         }
     }
 
@@ -326,12 +330,23 @@ pub async fn deploy_python_app(
             &request.install_dir,
         ],
     )?;
-    run_external_cmd(&venv_python, &["-m", &request.service.replace('-', "_"), "--help"])
-        .or_else(|_| run_external_cmd(&venv_python, &["-m", "jam_maestro", "--help"]))?;
+    run_external_cmd(
+        &venv_python,
+        &["-m", &request.service.replace('-', "_"), "--help"],
+    )
+    .or_else(|_| run_external_cmd(&venv_python, &["-m", "jam_maestro", "--help"]))?;
     process_compose_call(&["process", "restart", &request.process_name])?;
     wait_for_process_running(&request.process_name, Duration::from_secs(30))?;
 
-    publish_confirmed(nats, &request.service, &request.version, &request.requested_by, &request.trace_ctx, 1).await
+    publish_confirmed(
+        nats,
+        &request.service,
+        &request.version,
+        &request.requested_by,
+        &request.trace_ctx,
+        1,
+    )
+    .await
 }
 
 /// Install a binary directly into a canonical root-owned path (e.g.
@@ -355,7 +370,15 @@ pub async fn install_canonical_binary(
         ));
     }
     install_via_atomic_rename(&request.staging_path, &request.dest_path)?;
-    publish_confirmed(nats, &request.service, &request.version, &request.requested_by, &request.trace_ctx, 1).await
+    publish_confirmed(
+        nats,
+        &request.service,
+        &request.version,
+        &request.requested_by,
+        &request.trace_ctx,
+        1,
+    )
+    .await
 }
 
 async fn publish_confirmed(
@@ -433,8 +456,7 @@ fn install_via_atomic_rename(staging_path: &Path, runtime_path: &Path) -> Result
     let parent = runtime_path
         .parent()
         .ok_or_else(|| format!("runtime path has no parent: {}", runtime_path.display()))?;
-    fs::create_dir_all(parent)
-        .map_err(|err| format!("create {}: {err}", parent.display()))?;
+    fs::create_dir_all(parent).map_err(|err| format!("create {}: {err}", parent.display()))?;
     let file_name = runtime_path
         .file_name()
         .and_then(|name| name.to_str())
@@ -538,7 +560,8 @@ async fn apply_staged_patch_locked(
     nats: &JamNats,
     request: &ApplyRequest,
 ) -> Result<RoutingManifestUpdatedEvent, String> {
-    let installed = install_staged_binary(&request.staging_path, &request.service, &request.version)?;
+    let installed =
+        install_staged_binary(&request.staging_path, &request.service, &request.version)?;
     if installed.binary_sha256 != request.expected_sha256 {
         return Err(format!(
             "staged binary sha256 mismatch: declared={} actual={}",
@@ -616,7 +639,8 @@ async fn apply_staged_patch_locked(
         request.nats_token.as_deref(),
     )?;
     if let Err(err) =
-        verify_patch_service_health(nats, &request.service, &subject_prefix, &request.trace_ctx).await
+        verify_patch_service_health(nats, &request.service, &subject_prefix, &request.trace_ctx)
+            .await
     {
         let stop = candidate.stop();
         return Err(format!(
@@ -705,12 +729,22 @@ async fn rollback_locked(
         .manifest
         .services
         .get(&request.service)
-        .ok_or_else(|| format!("current manifest has no service entry for {}", request.service))?;
+        .ok_or_else(|| {
+            format!(
+                "current manifest has no service entry for {}",
+                request.service
+            )
+        })?;
     let to_route = previous
         .manifest
         .services
         .get(&request.service)
-        .ok_or_else(|| format!("previous manifest has no service entry for {}", request.service))?;
+        .ok_or_else(|| {
+            format!(
+                "previous manifest has no service entry for {}",
+                request.service
+            )
+        })?;
 
     let from_version = from_route.current_version.clone();
     let to_version = to_route.current_version.clone();

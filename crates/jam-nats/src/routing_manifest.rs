@@ -219,15 +219,12 @@ impl RoutingResolver {
         };
         let entry = load_current_routing_manifest(js).await?;
         let mut cache = self.cache.write().await;
-        match entry {
-            Some(e) => {
-                cache.revision = Some(e.revision);
-                cache.manifest = Some(e.manifest);
-            }
-            None => {
-                cache.revision = None;
-                cache.manifest = None;
-            }
+        if let Some(e) = entry {
+            cache.revision = Some(e.revision);
+            cache.manifest = Some(e.manifest);
+        } else {
+            cache.revision = None;
+            cache.manifest = None;
         }
         Ok(())
     }

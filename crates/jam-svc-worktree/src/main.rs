@@ -1263,11 +1263,9 @@ mod tests {
 
         assert_eq!(created.project, "jamboree");
         assert_eq!(created.trunk_ref, "origin/main");
-        assert!(
-            Path::new(&created.worktree_path)
-                .join("README.md")
-                .is_file()
-        );
+        assert!(Path::new(&created.worktree_path)
+            .join("README.md")
+            .is_file());
     }
 
     #[tokio::test]

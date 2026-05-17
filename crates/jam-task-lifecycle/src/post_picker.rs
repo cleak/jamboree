@@ -72,8 +72,14 @@ struct ExitedEvent {
 }
 
 enum CheckOutcome {
-    Ready { title: String, body: String },
-    NeedsContinuation { reason: &'static str, detail: String },
+    Ready {
+        title: String,
+        body: String,
+    },
+    NeedsContinuation {
+        reason: &'static str,
+        detail: String,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -116,11 +122,7 @@ struct ResumePickerResponse {
 /// Handle a `pr.review-received` event: emit `picker.continuation-needed`
 /// so the Picker addresses the new review activity in its worktree. The
 /// follow-up commits flow back to the same PR branch.
-pub async fn handle_pr_review_received(
-    nats: &JamNats,
-    envelope: &JournalEnvelope,
-    ctx: &TraceCtx,
-) {
+pub async fn handle_pr_review_received(nats: &JamNats, envelope: &JournalEnvelope, ctx: &TraceCtx) {
     let task_id = envelope
         .payload
         .get("task_id")
@@ -533,8 +535,7 @@ fn read_jam_file(worktree: &str, relpath: &str) -> Option<String> {
 
 fn sudo_picker_check(bash_cmd: &str) -> String {
     let sudo_bin = std::env::var(SUDO_BIN_ENV).unwrap_or_else(|_| DEFAULT_SUDO_BIN.into());
-    let picker_user =
-        std::env::var(PICKER_USER_ENV).unwrap_or_else(|_| DEFAULT_PICKER_USER.into());
+    let picker_user = std::env::var(PICKER_USER_ENV).unwrap_or_else(|_| DEFAULT_PICKER_USER.into());
     let mut command = Command::new(&sudo_bin);
     // `-i` simulates a full login: sets HOME to the target user's home and
     // runs through the target user's shell init. We need this so git reads
@@ -640,7 +641,10 @@ async fn publish_continuation(
         "jam-task-lifecycle",
         payload,
     );
-    if let Err(err) = nats.publish_traced(CONTINUATION_SUBJECT, &envelope, ctx).await {
+    if let Err(err) = nats
+        .publish_traced(CONTINUATION_SUBJECT, &envelope, ctx)
+        .await
+    {
         warn!(
             task = %event.task_id,
             reason = %reason,
@@ -759,7 +763,9 @@ mod tests {
         assert!(is_unrecoverable_remote_failure(
             "Permission denied (publickey).\nfatal: Could not read from remote repository."
         ));
-        assert!(is_unrecoverable_remote_failure("Authentication failed for https://github.com/foo"));
+        assert!(is_unrecoverable_remote_failure(
+            "Authentication failed for https://github.com/foo"
+        ));
     }
 
     #[test]

@@ -339,7 +339,10 @@ fn app(state: AppState, static_dir: &Path) -> Router {
         .route("/api/events/recent", get(recent_events_handler))
         .route("/api/quota", get(quota_handler))
         .route("/api/runtime/services", get(runtime_services_handler))
-        .route("/api/deploy", get(deploy_targets_handler).post(deploy_handler))
+        .route(
+            "/api/deploy",
+            get(deploy_targets_handler).post(deploy_handler),
+        )
         .route("/api/tasks", get(tasks_handler).post(task_spawn_handler))
         .route("/api/tasks/{task_id}/resume", post(task_resume_handler))
         .route("/api/trace/{trace_id}", get(trace_replay_handler))
@@ -531,7 +534,11 @@ async fn deploy_handler(
 
     let service = input.service.trim().to_owned();
     if service.is_empty() {
-        return trace_error_response(StatusCode::BAD_REQUEST, "missing-service", "service is required".into());
+        return trace_error_response(
+            StatusCode::BAD_REQUEST,
+            "missing-service",
+            "service is required".into(),
+        );
     }
     let target = match jam_tools_core::deploy_targets::find(&service) {
         Some(t) => t,
@@ -539,9 +546,7 @@ async fn deploy_handler(
             return trace_error_response(
                 StatusCode::BAD_REQUEST,
                 "unknown-service",
-                format!(
-                    "no deploy target named `{service}`; see GET /api/deploy for the list"
-                ),
+                format!("no deploy target named `{service}`; see GET /api/deploy for the list"),
             );
         }
     };
@@ -595,11 +600,7 @@ async fn deploy_handler(
         match jam_tools_core::hashing::sha256_file_hex(&staging_path) {
             Ok(value) => value,
             Err(err) => {
-                return trace_error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "hash-failed",
-                    err,
-                );
+                return trace_error_response(StatusCode::INTERNAL_SERVER_ERROR, "hash-failed", err);
             }
         }
     };
@@ -796,9 +797,15 @@ trait PatchEventLike {
     fn checks_run(&self) -> u32;
 }
 impl PatchEventLike for jam_events::generated::PatchConfirmed {
-    fn service(&self) -> &str { &self.service }
-    fn version(&self) -> &str { &self.version }
-    fn checks_run(&self) -> u32 { self.checks_run }
+    fn service(&self) -> &str {
+        &self.service
+    }
+    fn version(&self) -> &str {
+        &self.version
+    }
+    fn checks_run(&self) -> u32 {
+        self.checks_run
+    }
 }
 
 async fn tasks_handler(

@@ -1002,7 +1002,10 @@ async fn publish_python_apply_and_wait(
         PatchConfirmed, PatchFailed, PatchRolledBackSuccessfully, PatchStaged,
     };
     if !source_dir.is_dir() {
-        return Err(format!("source path is not a dir: {}", source_dir.display()));
+        return Err(format!(
+            "source path is not a dir: {}",
+            source_dir.display()
+        ));
     }
     let nats = JamNats::connect(&ctx.nats_url, ctx.nats_token.clone())
         .await
@@ -1213,9 +1216,13 @@ async fn publish_rollback_and_wait(
         ctx.actor.clone(),
         payload,
     );
-    nats.publish_traced(PatchRollbackRequested::EVENT_TYPE, &envelope, &ctx.trace_ctx)
-        .await
-        .map_err(|err| format!("publish patch.rollback-requested: {err}"))?;
+    nats.publish_traced(
+        PatchRollbackRequested::EVENT_TYPE,
+        &envelope,
+        &ctx.trace_ctx,
+    )
+    .await
+    .map_err(|err| format!("publish patch.rollback-requested: {err}"))?;
     eprintln!(
         "patch.rollback-requested published; waiting up to {}s for the agent",
         ctx.timeout.as_secs()
@@ -1389,7 +1396,6 @@ fn validate_executable_for_publish(path: &Path) -> Result<(), String> {
     let _ = path;
     Ok(())
 }
-
 
 use jam_tools_core::hashing::sha256_file_hex;
 
@@ -2630,7 +2636,13 @@ fn delegate_ui_to_maestro_if_needed() -> Option<ExitCode> {
     }
     let forwarded: Vec<String> = std::env::args().skip(1).collect();
     let status = ProcessCommand::new("sudo")
-        .args(["-n", "-u", jam_tools_core::paths::MAESTRO_USER, "-i", "/opt/jam/bin/jam"])
+        .args([
+            "-n",
+            "-u",
+            jam_tools_core::paths::MAESTRO_USER,
+            "-i",
+            "/opt/jam/bin/jam",
+        ])
         .args(&forwarded)
         .status();
     Some(match status {
@@ -3514,13 +3526,21 @@ fn run_deploy(
     }
 
     if resolved.len() > 1 {
-        eprintln!("deploying {} services in order: {}", resolved.len(), resolved.join(", "));
+        eprintln!(
+            "deploying {} services in order: {}",
+            resolved.len(),
+            resolved.join(", ")
+        );
     }
 
     let mut any_failure = false;
     for (idx, service) in resolved.iter().enumerate() {
         if resolved.len() > 1 {
-            eprintln!("\n[{idx_plus}/{total}] {service}", idx_plus = idx + 1, total = resolved.len());
+            eprintln!(
+                "\n[{idx_plus}/{total}] {service}",
+                idx_plus = idx + 1,
+                total = resolved.len()
+            );
         }
         let result = run_deploy_inner(
             service.clone(),
@@ -3559,9 +3579,7 @@ fn run_deploy(
 fn resolve_deploy_targets(services: Vec<String>, dirty: bool) -> Result<Vec<String>, String> {
     if dirty {
         if !services.is_empty() {
-            return Err(
-                "--dirty cannot be combined with explicit service names".into(),
-            );
+            return Err("--dirty cannot be combined with explicit service names".into());
         }
         let workspace_root = resolve_workspace_root()?;
         return discover_dirty_targets(&workspace_root);
@@ -3857,7 +3875,6 @@ fn git_short_sha(workspace_root: &Path) -> Result<String, String> {
         .map_err(|err| format!("git rev-parse returned invalid utf-8: {err}"))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3869,9 +3886,15 @@ mod tests {
         let repo = tmp.path();
         for (args, expect) in [
             (vec!["init", "-q", "-b", "main"], "git init"),
-            (vec!["config", "user.email", "test@example.com"], "git config email"),
+            (
+                vec!["config", "user.email", "test@example.com"],
+                "git config email",
+            ),
             (vec!["config", "user.name", "test"], "git config name"),
-            (vec!["config", "commit.gpgsign", "false"], "git config gpgsign"),
+            (
+                vec!["config", "commit.gpgsign", "false"],
+                "git config gpgsign",
+            ),
         ] {
             let status = ProcessCommand::new("git")
                 .args(&args)
@@ -3888,7 +3911,11 @@ mod tests {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(&path, b"base\n").unwrap();
         }
-        ProcessCommand::new("git").args(["add", "-A"]).current_dir(repo).status().unwrap();
+        ProcessCommand::new("git")
+            .args(["add", "-A"])
+            .current_dir(repo)
+            .status()
+            .unwrap();
         ProcessCommand::new("git")
             .args(["commit", "-q", "-m", "baseline"])
             .current_dir(repo)
@@ -3914,10 +3941,7 @@ mod tests {
 
     #[test]
     fn discover_dirty_targets_ignores_maestro_test_only_changes() {
-        let tmp = write_dirty_repo(&[
-            "maestro/tests/unit/test_dispatch.py",
-            "maestro/README.md",
-        ]);
+        let tmp = write_dirty_repo(&["maestro/tests/unit/test_dispatch.py", "maestro/README.md"]);
         let targets = discover_dirty_targets(tmp.path()).unwrap();
         assert!(targets.is_empty(), "got {targets:?}");
     }
@@ -3944,7 +3968,8 @@ mod tests {
 
     #[test]
     fn resolve_deploy_targets_passes_explicit_services_through() {
-        let targets = resolve_deploy_targets(vec!["worktree".into(), "maestro".into()], false).unwrap();
+        let targets =
+            resolve_deploy_targets(vec!["worktree".into(), "maestro".into()], false).unwrap();
         assert_eq!(targets, vec!["worktree", "maestro"]);
     }
 

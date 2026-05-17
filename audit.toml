@@ -1,0 +1,29 @@
+# cargo-audit configuration for the Jamboree monorepo.
+#
+# Read automatically by `cargo audit` from the workspace root. The advisories
+# listed here are known and reviewed but not fixable today without bumping
+# upstream dependencies that we haven't migrated yet. Each entry includes a
+# pointer to why it's allow-listed.
+#
+# Re-evaluate when bumping `async-nats` (will release the rustls-webpki pin)
+# or when an `rsa` crate maintainer publishes a fix for the Marvin Attack.
+
+[advisories]
+ignore = [
+    # rsa 0.9.x — Marvin Attack timing sidechannel. No fixed upgrade available;
+    # the maintainers haven't published a patched 0.9.x. Reaches us via
+    # `jsonwebtoken -> rsa`, used for GitHub App JWT signing. Risk is
+    # acceptable: the attack requires precise timing on signing operations a
+    # local attacker can observe, and our JWT signing happens once per ~hour
+    # inside the maestro-only jam-svc-repo process.
+    "RUSTSEC-2023-0071",
+
+    # rustls-webpki 0.102.8 — pinned transitively by async-nats 0.39 (TLS to
+    # the local NATS broker on 127.0.0.1). All four advisories describe
+    # certificate-validation edge cases that don't apply to our localhost
+    # NATS connection. Re-evaluate on the next async-nats minor bump.
+    "RUSTSEC-2026-0049",
+    "RUSTSEC-2026-0098",
+    "RUSTSEC-2026-0099",
+    "RUSTSEC-2026-0104",
+]

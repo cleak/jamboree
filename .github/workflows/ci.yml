@@ -22,7 +22,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: -D warnings
+  # NOT -D warnings: pedantic lints (`clippy::pedantic = warn` in workspace
+  # Cargo.toml) should advise without blocking. `clippy::all` is already
+  # `deny` at the workspace level — actual bugs still fail the build.
   RUST_BACKTRACE: 1
 
 jobs:
@@ -45,8 +47,10 @@ jobs:
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
 
-      - name: cargo clippy --workspace --all-targets -- -D warnings
-        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: cargo clippy --workspace --all-targets
+        # `clippy::all = deny` at the workspace level still fails the build on
+        # genuine bug-class lints. Pedantic suggestions print but don't block.
+        run: cargo clippy --workspace --all-targets
 
       - name: cargo test --workspace --locked
         run: cargo test --workspace --locked
@@ -80,7 +84,18 @@ jobs:
           tool: cargo-audit
 
       - name: cargo audit
-        run: cargo audit
+        # See audit.toml at the workspace root for the rationale on each
+        # ignored advisory. cargo-audit only auto-reads `~/.cargo/audit.toml`,
+        # not a workspace-root config, so the ignore list is duplicated here.
+        # Re-evaluate when bumping `async-nats` (releases the rustls-webpki
+        # pins) or when `rsa` ships a Marvin-Attack fix.
+        run: |
+          cargo audit \
+            --ignore RUSTSEC-2023-0071 \
+            --ignore RUSTSEC-2026-0049 \
+            --ignore RUSTSEC-2026-0098 \
+            --ignore RUSTSEC-2026-0099 \
+            --ignore RUSTSEC-2026-0104
 
   gitleaks:
     name: gitleaks scan

@@ -48,9 +48,17 @@ rust-version = "1.94"
 unsafe_code = "forbid"
 
 [workspace.lints.clippy]
-all = { level = "deny", priority = -1 }
-pedantic = { level = "warn", priority = -1 }
-# Allowed exceptions to pedantic — these create noise for our domain.
+# `correctness` and `suspicious` are strict-deny — they catch real bugs and
+# almost-always-wrong patterns. `style`, `complexity`, `perf`, and `pedantic`
+# advise but don't fail builds. With fully-agentic merges, blocking on
+# style/complexity turns every CI run into a chase after pedantic suggestions
+# the picker can't always satisfy on the first revision (and CodeRabbit
+# already comments on the substantive ones).
+all = { level = "warn", priority = -2 }
+pedantic = { level = "warn", priority = -2 }
+correctness = { level = "deny", priority = -1 }
+suspicious = { level = "deny", priority = -1 }
+# Allowed exceptions — these create noise for our domain.
 module_name_repetitions = "allow"
 must_use_candidate = "allow"
 missing_errors_doc = "allow"

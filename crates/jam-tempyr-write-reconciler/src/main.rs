@@ -589,7 +589,11 @@ mod tests {
             nats_token: None,
             tempyr_bin: tempyr,
             request_root: tmp.path().join("requests"),
-            backoff: vec![Duration::from_millis(1), Duration::from_millis(1)],
+            // Backoff was 1ms which intermittently flaked on slow CI runners
+            // where the shell script's `printf > {state}` for attempt 1
+            // hadn't reached the filesystem before attempt 2 ran. 25ms gives
+            // plenty of headroom without slowing the local run noticeably.
+            backoff: vec![Duration::from_millis(25), Duration::from_millis(25)],
         };
         let request = test_request(tmp.path());
 

@@ -19,5 +19,5 @@
 
 ## Deploy
 
-- Not run; this task did not explicitly request a live deploy.
-- Exact deploy commands when approved: `jam deploy worktree` and `jam deploy task-lifecycle`.
+- `/opt/jam/bin/jam deploy task-lifecycle` - passed; patch confirmed with 1 check.
+- `jam deploy worktree` - not run; `jam-svc-worktree` runtime deployment was not needed to unblock PR handoff.

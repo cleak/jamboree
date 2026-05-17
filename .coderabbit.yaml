@@ -16,7 +16,14 @@ early_access: false
 
 reviews:
   profile: chill
-  request_changes_workflow: false
+  # request_changes_workflow=true: every CodeRabbit review starts as
+  # CHANGES_REQUESTED (blocks the required-approval branch protection),
+  # then flips to APPROVED automatically once all comment threads are
+  # resolved. The Picker's `mark-review-artifact-handled` tool resolves
+  # threads; when zero unresolved threads remain, CodeRabbit approves and
+  # GitHub auto-merge fires. This is the load-bearing setting for the
+  # fully-agentic merge loop.
+  request_changes_workflow: true
   high_level_summary: true
   poem: false
   review_status: true

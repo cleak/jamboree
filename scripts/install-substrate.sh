@@ -711,6 +711,38 @@ install_ui_bundle() {
 # Maestro Python app
 # ---------------------------------------------------------------------------
 
+ensure_jamboree_git_perms() {
+    # After the systemd-launch switch, jam-svc-worktree runs as maestro and
+    # has to write to caleb's `.git/` (e.g. `.git/refs/heads/task/<id>`,
+    # `.git/worktrees/<id>/…`) when spawning per-task worktrees. The picker
+    # user also writes to refs via the shared worktree mechanism. Both are
+    # in the maestro group, so granting `caleb:maestro 2775` (group write +
+    # setgid for inheritance) lets every legitimate writer through without
+    # ever needing root.
+    #
+    # This mirrors the pattern bootstrap-users.sh already applies to
+    # ~/code/blueberry-tempyr-live/ and ~/code/jam-skills/ (mode 2770).
+    # We use 2775 here because the rest of /home/caleb/jamboree/ is
+    # public-readable; `.git/` should follow.
+    #
+    # Idempotent: chown/chmod are no-ops when ownership already matches.
+    local git_dir="$REPO_ROOT/.git"
+    if [[ ! -d "$git_dir" ]]; then
+        warn "no $git_dir; skipping (running outside a git checkout?)"
+        return 0
+    fi
+    if [[ $DRY_RUN -eq 1 ]]; then
+        info "[dry-run] would chown -R caleb:$MAESTRO_USER $git_dir"
+        info "[dry-run] would chmod -R g+w $git_dir"
+        info "[dry-run] would chmod g+s on all subdirectories"
+        return 0
+    fi
+    chown -R "$BUILD_USER:$MAESTRO_USER" "$git_dir"
+    chmod -R g+w "$git_dir"
+    find "$git_dir" -type d -exec chmod g+s {} +
+    pass "$git_dir is $BUILD_USER:$MAESTRO_USER mode 2775 (setgid)"
+}
+
 install_jam_service() {
     # Delegate to scripts/install-jam-service.sh; we're already root here
     # so the privilege check inside that script passes without prompting.
@@ -948,6 +980,9 @@ main() {
 
     header "Install jam.service systemd unit"
     install_jam_service
+
+    header "Open caleb's jamboree .git/ to maestro group writes"
+    ensure_jamboree_git_perms
 
     header "Verify canonical Tempyr worktree"
     ensure_canonical_tempyr_worktree_registered

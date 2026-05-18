@@ -129,6 +129,24 @@ cleanup_one() {
         rm -f -- "$ref_file"
         pass "removed $ref_file"
     fi
+
+    # Remote-tracking refs for the task branch on every configured remote.
+    # The PR-open path in `jam-svc-repo` pushes to `origin` and GitHub's
+    # auto-merge typically deletes the head branch on merge, but git keeps
+    # the local mirror around indefinitely (see `git fetch --prune` for the
+    # equivalent automatic cleanup). When pickers ran as root those mirror
+    # files end up root-owned, so this script — which we already invoke
+    # under sudo — is the right place to scrub them. Skip silently when no
+    # mirror file exists; the script stays idempotent.
+    local remote remote_ref
+    while read -r remote; do
+        [[ -z "$remote" ]] && continue
+        remote_ref="${repo}/.git/refs/remotes/${remote}/${branch}"
+        if [[ -f "$remote_ref" ]]; then
+            rm -f -- "$remote_ref"
+            pass "removed $remote_ref"
+        fi
+    done < <(git -C "$repo" remote 2>/dev/null || true)
 }
 
 usage() {

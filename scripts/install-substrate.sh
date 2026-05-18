@@ -732,15 +732,25 @@ ensure_jamboree_git_perms() {
         return 0
     fi
     if [[ $DRY_RUN -eq 1 ]]; then
-        info "[dry-run] would chown -R caleb:$MAESTRO_USER $git_dir"
-        info "[dry-run] would chmod -R g+w $git_dir"
+        info "[dry-run] would chown -R $BUILD_USER:$MAESTRO_USER $git_dir"
+        info "[dry-run] would chmod -R g+rwX $git_dir"
         info "[dry-run] would chmod g+s on all subdirectories"
+        info "[dry-run] would git config core.sharedRepository group"
         return 0
     fi
     chown -R "$BUILD_USER:$MAESTRO_USER" "$git_dir"
-    chmod -R g+w "$git_dir"
+    # `g+rwX` (capital X) preserves execute bits on files that already have
+    # them (git hooks etc.) and grants execute on directories. `g+w` alone
+    # would leave dir traversal half-broken on some umasks; `g+rwx` would
+    # incorrectly mark all files executable.
+    chmod -R g+rwX "$git_dir"
     find "$git_dir" -type d -exec chmod g+s {} +
-    pass "$git_dir is $BUILD_USER:$MAESTRO_USER mode 2775 (setgid)"
+    # core.sharedRepository=group is the canonical git knob for "this repo
+    # is shared with a group". Without it, git creates new objects/refs
+    # using the process umask, which on default systems drops group write
+    # and drifts back to the same problem we just fixed.
+    git -C "$REPO_ROOT" config core.sharedRepository group
+    pass "$git_dir is $BUILD_USER:$MAESTRO_USER mode 2775 (setgid, sharedRepository=group)"
 }
 
 install_jam_service() {

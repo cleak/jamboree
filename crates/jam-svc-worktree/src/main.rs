@@ -457,6 +457,7 @@ async fn create_worktree(
         )
         .await?;
         make_group_writable_tree(&worktree_path)?;
+        seed_jam_metadata_dir(&worktree_path)?;
         if state.config.configure_picker_safe_directory {
             mark_picker_safe_directory(&worktree_path, &state.config).await?;
         }
@@ -801,6 +802,45 @@ fn make_group_writable_tree(path: &Path) -> Result<(), WorktreeError> {
 
 #[cfg(not(unix))]
 fn make_group_writable_tree(_path: &Path) -> Result<(), WorktreeError> {
+    Ok(())
+}
+
+/// Pre-create the `.jam/` metadata dir inside the worktree with mode 2770
+/// (group write + setgid) so files written by the picker (which runs as a
+/// different uid than the maestro-running services that read/write the
+/// codex-events log, PR title/body, and review-artifact state) all share
+/// the maestro group and remain mutually writable. Without this, the
+/// picker's default umask drops group write and resume-picker bricks on
+/// `Permission denied` when trying to append to `.jam/codex-events.jsonl`.
+///
+/// Idempotent: a pre-existing dir is reset to the right mode without
+/// touching its contents (the picker may have already created files).
+#[cfg(unix)]
+fn seed_jam_metadata_dir(worktree: &Path) -> Result<(), WorktreeError> {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    let path = worktree.join(".jam");
+    if !path.exists() {
+        fs::create_dir(&path).map_err(|err| {
+            WorktreeError::protocol(
+                "jam-metadata-dir-create-failed",
+                format!("failed to mkdir {}: {err}", path.display()),
+                "Ensure the worktree path is writable by jam-svc-worktree.",
+            )
+        })?;
+    }
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o2770)).map_err(|err| {
+        WorktreeError::protocol(
+            "jam-metadata-dir-chmod-failed",
+            format!("failed to chmod {} 2770: {err}", path.display()),
+            "Ensure the worktree path is writable by jam-svc-worktree.",
+        )
+    })?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn seed_jam_metadata_dir(_worktree: &Path) -> Result<(), WorktreeError> {
     Ok(())
 }
 

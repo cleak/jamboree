@@ -1381,6 +1381,14 @@ function isStaleTask(row: TaskRow): boolean {
   if (row.status === "failed" || row.status === "abandoned" || row.status === "merged") {
     return ageMs > ONE_DAY;
   }
+  // `picker-completed` means the picker exited cleanly but post-picker
+  // never moved the task forward (open-pr failed, continuation cap fired
+  // before task.failed was emitted, etc.). Anything still stuck there
+  // after a day is a dead task that won't recover on its own — hide it
+  // so the dashboard's "ready for PR" list reflects actually-pending PRs.
+  if (row.status === "picker-completed") {
+    return ageMs > ONE_DAY;
+  }
   // Older-than-7d catches "backlog" entries that never got picked up plus
   // anything else that fell out of view. Active in-flight tasks should
   // refresh their updated_at on every event, so they won't trip this.

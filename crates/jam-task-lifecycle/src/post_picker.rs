@@ -268,8 +268,32 @@ pub async fn handle_continuation_needed(
             task = %task_id,
             reason = %reason,
             attempt = attempt,
-            "continuation-needed exceeded attempt cap; leaving for human triage",
+            "continuation-needed exceeded attempt cap; transitioning to task.failed",
         );
+        // Without an explicit task.failed, the task sticks at
+        // `picker-completed` forever and clutters the UI's "ready for PR"
+        // list — the cap is the actual signal the task has given up, so
+        // we surface it as a terminal failure for human triage.
+        let payload = jam_events::generated::TaskFailed {
+            task_id: task_id.to_owned(),
+            reason: format!("continuation-cap-{reason}"),
+            detail: format!(
+                "Post-picker continuation hit attempt cap ({CONTINUATION_ATTEMPT_CAP}) with reason \"{reason}\"; \
+                 picker could not satisfy the system on its own."
+            ),
+            failed_at: Utc::now(),
+            source_event_type: "picker.continuation-needed".to_owned(),
+        };
+        if let Err(err) = nats
+            .publish_traced("journal.task.failed", &payload, ctx)
+            .await
+        {
+            warn!(
+                task = %task_id,
+                error = %err,
+                "failed to publish task.failed after continuation cap; task will stay at picker-completed in the UI",
+            );
+        }
         return;
     }
 

@@ -3249,14 +3249,29 @@ exit 1
         fn write_script(&self, body: &str) {
             assert!(self.tmp.path().is_dir());
             let staged = self.tmp.path().join("gh.staged");
-            fs::write(&staged, body).unwrap();
-            let mut permissions = fs::metadata(&staged).unwrap().permissions();
+            // Explicit File::create + sync_all + drop guarantees the
+            // kernel has released the write fd before the rename + exec
+            // path runs. Plain fs::write was racing with Linux's
+            // ETXTBSY check on busy CI runners — Command::output()
+            // would panic with "Text file busy (os error 26)" because
+            // the busy-text flag hadn't cleared by the time gh was
+            // exec'd.
             #[cfg(unix)]
             {
+                use std::io::Write;
                 use std::os::unix::fs::PermissionsExt;
+                let mut file = std::fs::File::create(&staged).unwrap();
+                file.write_all(body.as_bytes()).unwrap();
+                file.sync_all().unwrap();
+                drop(file);
+                let mut permissions = fs::metadata(&staged).unwrap().permissions();
                 permissions.set_mode(0o755);
+                fs::set_permissions(&staged, permissions).unwrap();
             }
-            fs::set_permissions(&staged, permissions).unwrap();
+            #[cfg(not(unix))]
+            {
+                fs::write(&staged, body).unwrap();
+            }
             fs::rename(staged, &self.script).unwrap();
         }
     }

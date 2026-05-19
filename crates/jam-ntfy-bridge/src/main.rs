@@ -602,10 +602,30 @@ mod tests {
         } else {
             "#!/bin/sh\necho 'fake curl failed' >&2\nexit 1\n".into()
         };
-        fs::write(&script, body).unwrap();
-        let mut permissions = fs::metadata(&script).unwrap().permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&script, permissions).unwrap();
+        write_executable_for_test(&script, &body);
         script
     }
+}
+
+#[cfg(test)]
+#[cfg(unix)]
+fn write_executable_for_test(path: &std::path::Path, body: &str) {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+    // Explicit File::create + write_all + sync_all + drop guarantees
+    // the kernel has fully released the write fd before the caller
+    // exec's the script. Plain `fs::write` followed by
+    // `fs::set_permissions` was racing with Linux's ETXTBSY check on
+    // CI runners under load — the test would panic with
+    // "Text file busy (os error 26)" because the busy-text flag hadn't
+    // cleared by the time `Command::new(...).output()` tried to exec.
+    let mut file = std::fs::File::create(path).expect("create test script");
+    file.write_all(body.as_bytes()).expect("write test script");
+    file.sync_all().expect("fsync test script");
+    drop(file);
+    let mut perms = std::fs::metadata(path)
+        .expect("stat test script")
+        .permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(path, perms).expect("chmod test script");
 }

@@ -639,8 +639,6 @@ mod tests {
 
     #[cfg(unix)]
     fn fake_tempyr(root: &Path, succeed_second: bool) -> PathBuf {
-        use std::os::unix::fs::PermissionsExt;
-
         let script = root.join("fake-tempyr");
         // Sentinel-flag scheme: the first invocation creates the flag file
         // and fails; subsequent invocations see the flag and succeed.
@@ -661,11 +659,29 @@ mod tests {
         } else {
             "#!/bin/sh\necho 'fake tempyr failed' >&2\nexit 1\n".into()
         };
-        fs::write(&script, body).unwrap();
-        let mut permissions = fs::metadata(&script).unwrap().permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&script, permissions).unwrap();
+        write_executable_for_test(&script, &body);
         script
+    }
+
+    /// Write `body` to `path`, chmod 0755, and fsync so the kernel
+    /// fully releases the write fd before the caller exec's the file.
+    /// Plain `fs::write` + `fs::set_permissions` races with Linux's
+    /// ETXTBSY check on busy CI runners — `Command::output()` panics
+    /// with "Text file busy (os error 26)". Explicit
+    /// File::create + sync_all + drop avoids that window.
+    #[cfg(unix)]
+    fn write_executable_for_test(path: &Path, body: &str) {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        let mut file = std::fs::File::create(path).expect("create test script");
+        file.write_all(body.as_bytes()).expect("write test script");
+        file.sync_all().expect("fsync test script");
+        drop(file);
+        let mut perms = std::fs::metadata(path)
+            .expect("stat test script")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(path, perms).expect("chmod test script");
     }
 
     #[cfg(not(unix))]

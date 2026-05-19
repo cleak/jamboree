@@ -3722,6 +3722,7 @@ fn run_deploy_inner(
         Strategy::AtomicSwap
         | Strategy::StopReplaceRestart { .. }
         | Strategy::CanonicalBinary { .. } => {
+            let from_provided = from.is_some();
             let source = if let Some(path) = from {
                 let path = if path.is_absolute() {
                     path
@@ -3754,6 +3755,24 @@ fn run_deploy_inner(
                 }
                 None => compute_deploy_version(&workspace_root, Some(&source))?,
             };
+            // Services with static assets need those assets shipped
+            // alongside the binary. Today ui-server is the only such
+            // service: the JS/CSS bundle is built by vite into ui/dist
+            // and the running server reads it from
+            // /home/maestro/.jam/ui/dist. Rebuild + sync here so the
+            // standard `jam deploy ui-server` flow ships the binary AND
+            // the new UI, not just the binary. Without this, UI-only
+            // PRs land in main but the running server keeps serving
+            // the old bundle until install-substrate.sh re-runs.
+            //
+            // Order matters: sync the bundle BEFORE the
+            // StopReplaceRestart picks up the new binary, so when
+            // ui-server restarts it serves the new bundle on the first
+            // request. Failure here aborts the deploy; the binary is
+            // never staged.
+            if service == "ui-server" && !from_provided {
+                sync_ui_bundle(&workspace_root)?;
+            }
             eprintln!(
                 "publishing patch.staged for {service} {version} from {}",
                 source.display()
@@ -3821,6 +3840,68 @@ fn cargo_build_release_crate(workspace_root: &Path, crate_name: &str) -> Result<
     if !status.success() {
         return Err(format!("cargo build -p {crate_name} failed: {status}"));
     }
+    Ok(())
+}
+
+/// Rebuild the UI bundle and atomically swap it into ui-server's runtime
+/// dist dir. Invoked by `jam deploy ui-server` before the binary patch
+/// gets staged so the restarted server serves the new bundle on the first
+/// request.
+///
+/// Uses sudo -u maestro for the destination writes (maestro owns
+/// `~maestro/.jam/ui/`); the build itself runs as caleb because that's
+/// where the npm + node toolchain lives.
+fn sync_ui_bundle(workspace_root: &Path) -> Result<(), String> {
+    let ui_dir = workspace_root.join("ui");
+    if !ui_dir.join("package.json").is_file() {
+        return Err(format!(
+            "expected UI package at {} (missing package.json)",
+            ui_dir.display()
+        ));
+    }
+    eprintln!("building UI bundle (npm run build)");
+    let status = ProcessCommand::new("npm")
+        .args(["run", "build"])
+        .current_dir(&ui_dir)
+        .status()
+        .map_err(|err| format!("run npm run build: {err}"))?;
+    if !status.success() {
+        return Err(format!("npm run build failed: {status}"));
+    }
+    let dist = ui_dir.join("dist");
+    if !dist.is_dir() {
+        return Err(format!(
+            "expected vite output at {} after build",
+            dist.display()
+        ));
+    }
+    // Atomic-ish swap via maestro: stage to dist.new, swap directory
+    // names so the runtime dir is always coherent. cp + mv is a tiny
+    // window vs. true atomic rename, but vite's dist is many files so
+    // we accept the tradeoff (alternative: rsync into place).
+    eprintln!("syncing ui/dist to /home/maestro/.jam/ui/dist (as maestro)");
+    let dist_display = dist.display();
+    let script = format!(
+        "set -euo pipefail
+mkdir -p /home/maestro/.jam/ui
+rm -rf /home/maestro/.jam/ui/dist.new
+cp -r {dist_display} /home/maestro/.jam/ui/dist.new
+rm -rf /home/maestro/.jam/ui/dist.old
+if [ -d /home/maestro/.jam/ui/dist ]; then
+  mv /home/maestro/.jam/ui/dist /home/maestro/.jam/ui/dist.old
+fi
+mv /home/maestro/.jam/ui/dist.new /home/maestro/.jam/ui/dist
+rm -rf /home/maestro/.jam/ui/dist.old
+"
+    );
+    let status = ProcessCommand::new("sudo")
+        .args(["-n", "-u", "maestro", "bash", "-c", &script])
+        .status()
+        .map_err(|err| format!("sudo -u maestro sync UI dist: {err}"))?;
+    if !status.success() {
+        return Err(format!("sudo -u maestro sync UI dist failed: {status}"));
+    }
+    eprintln!("UI bundle synced");
     Ok(())
 }
 

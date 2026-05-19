@@ -418,15 +418,27 @@ async fn execute_with_retry(config: &Config, request: &TempyrWriteRequest) -> Wr
 }
 
 async fn execute_once(config: &Config, request: &TempyrWriteRequest) -> Result<(), String> {
-    let mut command = Command::new(&config.tempyr_bin);
-    command.args(&request.args);
-    if let Some(worktree) = &request.worktree {
-        command.current_dir(worktree);
-    }
-    let output = command
-        .output()
-        .await
-        .map_err(|err| format!("run {}: {err}", config.tempyr_bin.display()))?;
+    // ETXTBSY retry: same Linux race documented in
+    // jam-svc-repo::run_command — exec briefly refused on a file whose
+    // write fd was just closed. Hits CI tests that write fake-tempyr
+    // and immediately exec it.
+    const ETXTBSY: i32 = 26;
+    let mut attempt = 0_u32;
+    let output = loop {
+        let mut command = Command::new(&config.tempyr_bin);
+        command.args(&request.args);
+        if let Some(worktree) = &request.worktree {
+            command.current_dir(worktree);
+        }
+        match command.output().await {
+            Ok(out) => break out,
+            Err(err) if attempt < 4 && err.raw_os_error() == Some(ETXTBSY) => {
+                tokio::time::sleep(Duration::from_millis(10_u64 << attempt)).await;
+                attempt += 1;
+            }
+            Err(err) => return Err(format!("run {}: {err}", config.tempyr_bin.display())),
+        }
+    };
     if output.status.success() {
         return Ok(());
     }

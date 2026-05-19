@@ -245,16 +245,33 @@ async fn send_ntfy(
     notification: &NotifyHumanMessage,
     ctx: &TraceCtx,
 ) -> Result<(), BridgeError> {
-    let output = Command::new(&config.curl_bin)
-        .args(curl_args(config, notification, ctx)?)
-        .output()
-        .await
-        .map_err(|err| {
-            BridgeError::Notify(format!(
-                "failed to execute {}: {err}",
-                config.curl_bin.display()
-            ))
-        })?;
+    let args = curl_args(config, notification, ctx)?;
+    // ETXTBSY retry: see jam-svc-repo::run_command for rationale. Linux
+    // briefly refuses exec on a file whose write fd was just closed;
+    // hits CI tests that write a script and immediately exec it.
+    const ETXTBSY: i32 = 26;
+    let output = {
+        let mut attempt = 0_u32;
+        loop {
+            let result = Command::new(&config.curl_bin)
+                .args(args.iter().map(String::as_str))
+                .output()
+                .await;
+            match result {
+                Ok(output) => break output,
+                Err(err) if attempt < 4 && err.raw_os_error() == Some(ETXTBSY) => {
+                    tokio::time::sleep(Duration::from_millis(10_u64 << attempt)).await;
+                    attempt += 1;
+                }
+                Err(err) => {
+                    return Err(BridgeError::Notify(format!(
+                        "failed to execute {}: {err}",
+                        config.curl_bin.display()
+                    )));
+                }
+            }
+        }
+    };
     if output.status.success() {
         return Ok(());
     }

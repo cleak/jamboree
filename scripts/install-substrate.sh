@@ -751,6 +751,25 @@ ensure_jamboree_git_perms() {
     # and drifts back to the same problem we just fixed.
     git -C "$REPO_ROOT" config core.sharedRepository group
     pass "$git_dir is $BUILD_USER:$MAESTRO_USER mode 2775 (setgid, sharedRepository=group)"
+
+    # Ensure origin/HEAD is configured so jam-task-lifecycle's
+    # derive_default_branch resolves to the right trunk (main for
+    # jamboree, master for blueberry) instead of falling back to the
+    # JAM_TRUNK_BRANCH default. Cloning normally sets this, but it can be
+    # missing on older clones or after a manual remote re-add. Refresh it
+    # from the remote on every install so the fix is sticky.
+    if git -C "$REPO_ROOT" ls-remote --symref origin HEAD >/dev/null 2>&1; then
+        sudo -u "$BUILD_USER" git -C "$REPO_ROOT" remote set-head origin --auto >/dev/null 2>&1 || true
+        local resolved
+        resolved="$(git -C "$REPO_ROOT" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)"
+        if [[ -n "$resolved" ]]; then
+            pass "origin/HEAD -> $resolved"
+        else
+            warn "origin/HEAD still unresolved after \`git remote set-head\`; jam-task-lifecycle will fall back to JAM_TRUNK_BRANCH"
+        fi
+    else
+        warn "cannot reach origin to refresh HEAD; skipping (origin probably not configured or offline)"
+    fi
 }
 
 install_jam_service() {

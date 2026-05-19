@@ -1349,7 +1349,7 @@ function TasksView(props: {
             <span>
               {hiddenCount()} stale task{hiddenCount() === 1 ? "" : "s"} hidden
               <span class="ml-1 text-[#9aa195]">
-                (failed/merged &gt; 24h or older than 7 days)
+                (failed/merged/picker-completed &gt; 24h or older than 7 days)
               </span>
             </span>
             <button

@@ -284,8 +284,16 @@ pub async fn handle_continuation_needed(
             failed_at: Utc::now(),
             source_event_type: "picker.continuation-needed".to_owned(),
         };
+        let envelope = jam_events::EventEnvelope::new(
+            jam_events::generated::TaskFailed::EVENT_TYPE,
+            jam_events::generated::TaskFailed::EVENT_SUBTYPE_VERSION,
+            0,
+            ctx.trace_id.to_string(),
+            "jam-task-lifecycle",
+            payload,
+        );
         if let Err(err) = nats
-            .publish_traced("journal.task.failed", &payload, ctx)
+            .publish_traced("journal.task.failed", &envelope, ctx)
             .await
         {
             warn!(

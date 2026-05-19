@@ -606,13 +606,15 @@ function App() {
             </For>
           </nav>
           <div class="mt-4 space-y-3">
-            <ConnectionControls
-              token={token()}
-              status={status()}
-              onToken={setToken}
-              onReconnect={connect}
-              onClear={disconnect}
-            />
+            <Show when={status() !== "connected"}>
+              <ConnectionControls
+                token={token()}
+                status={status()}
+                onToken={setToken}
+                onReconnect={connect}
+                onClear={disconnect}
+              />
+            </Show>
             <AdvancedControls
               subject={subject()}
               onSubject={setSubject}

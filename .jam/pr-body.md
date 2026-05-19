@@ -1,19 +1,7 @@
 ## Summary
 
-Hides the sidebar Connection card once the Jamboree UI reaches the connected state. The token/reconnect controls still appear during loading, token errors, backlog errors, and disconnects so recovery remains available without changing the Blueberry/Jamboree task target boundary.
+Appends the requested e2e sanity comment to `crates/jam-tools-core/src/lib.rs` so the Maestro-launched Picker path can verify an end-to-end task branch, commit, and PR metadata flow.
 
 ## Verification
 
-- `npm ci` - passed; installed UI dependencies in the isolated task worktree
-- `npm run build` from `ui/` - passed
-- `tempyr validate` - failed on pre-existing graph issues in `dec-post-picker-coordination`: missing `comp-jam-task-lifecycle` target and missing reverse edge from `comp-jam-svc-session`
-
-## Deploy
-
-Not deployed; this task did not request a live deploy.
-
-Exact deploy command for this UI/runtime change:
-
-```bash
-jam deploy ui-server
-```
+- `cargo check -p jam-tools-core` - passed

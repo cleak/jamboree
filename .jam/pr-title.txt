@@ -1,1 +1,1 @@
-Hide connection controls after UI connects
+test: e2e sanity comment 2026-05-18

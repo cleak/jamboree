@@ -3852,6 +3852,16 @@ fn cargo_build_release_crate(workspace_root: &Path, crate_name: &str) -> Result<
 /// `~maestro/.jam/ui/`); the build itself runs as caleb because that's
 /// where the npm + node toolchain lives.
 fn sync_ui_bundle(workspace_root: &Path) -> Result<(), String> {
+    // §2.14 Native FS only: refuse to build/copy from a Windows mount.
+    // npm and vite on /mnt/c are nondeterministic and breaks the linux-
+    // only deployment principle. Mirrors the is_windows_mount check in
+    // jam-svc-repo / jam-svc-session / jam-setup.
+    if is_windows_mount(workspace_root) {
+        return Err(format!(
+            "workspace_root {} lives on a Windows filesystem mount; refusing per principle §2.14 (Native FS only)",
+            workspace_root.display()
+        ));
+    }
     let ui_dir = workspace_root.join("ui");
     if !ui_dir.join("package.json").is_file() {
         return Err(format!(
@@ -3879,30 +3889,61 @@ fn sync_ui_bundle(workspace_root: &Path) -> Result<(), String> {
     // names so the runtime dir is always coherent. cp + mv is a tiny
     // window vs. true atomic rename, but vite's dist is many files so
     // we accept the tradeoff (alternative: rsync into place).
+    //
+    // Each step runs as a separate ProcessCommand instead of a single
+    // `bash -c "<interpolated script>"` so the dist path is passed as
+    // a positional argument and never lexed by a shell — no chance of
+    // shell-metacharacter injection if the path ever has unusual
+    // characters.
     eprintln!("syncing ui/dist to /home/maestro/.jam/ui/dist (as maestro)");
-    let dist_display = dist.display();
-    let script = format!(
-        "set -euo pipefail
-mkdir -p /home/maestro/.jam/ui
-rm -rf /home/maestro/.jam/ui/dist.new
-cp -r {dist_display} /home/maestro/.jam/ui/dist.new
-rm -rf /home/maestro/.jam/ui/dist.old
-if [ -d /home/maestro/.jam/ui/dist ]; then
-  mv /home/maestro/.jam/ui/dist /home/maestro/.jam/ui/dist.old
-fi
-mv /home/maestro/.jam/ui/dist.new /home/maestro/.jam/ui/dist
-rm -rf /home/maestro/.jam/ui/dist.old
-"
-    );
-    let status = ProcessCommand::new("sudo")
-        .args(["-n", "-u", "maestro", "bash", "-c", &script])
-        .status()
-        .map_err(|err| format!("sudo -u maestro sync UI dist: {err}"))?;
-    if !status.success() {
-        return Err(format!("sudo -u maestro sync UI dist failed: {status}"));
+    const UI_ROOT: &str = "/home/maestro/.jam/ui";
+    const DIST: &str = "/home/maestro/.jam/ui/dist";
+    const DIST_NEW: &str = "/home/maestro/.jam/ui/dist.new";
+    const DIST_OLD: &str = "/home/maestro/.jam/ui/dist.old";
+    sudo_maestro(&["mkdir", "-p", UI_ROOT])?;
+    sudo_maestro(&["rm", "-rf", "--", DIST_NEW])?;
+    sudo_maestro(&["cp", "-r", "--", &dist.to_string_lossy(), DIST_NEW])?;
+    sudo_maestro(&["rm", "-rf", "--", DIST_OLD])?;
+    // Only rename existing dist out of the way if it actually exists.
+    // `mv DIST DIST_OLD` would fail if DIST is missing, which would
+    // break the very-first install path.
+    if Path::new(DIST).exists() {
+        sudo_maestro(&["mv", "--", DIST, DIST_OLD])?;
     }
+    sudo_maestro(&["mv", "--", DIST_NEW, DIST])?;
+    sudo_maestro(&["rm", "-rf", "--", DIST_OLD])?;
     eprintln!("UI bundle synced");
     Ok(())
+}
+
+/// Run `sudo -n -u maestro <args>` and bail on non-zero exit.
+fn sudo_maestro(args: &[&str]) -> Result<(), String> {
+    let mut sudo_args = vec!["-n", "-u", "maestro"];
+    sudo_args.extend_from_slice(args);
+    let status = ProcessCommand::new("sudo")
+        .args(&sudo_args)
+        .status()
+        .map_err(|err| format!("sudo -u maestro {}: {err}", args.join(" ")))?;
+    if !status.success() {
+        return Err(format!(
+            "sudo -u maestro {} failed: {status}",
+            args.join(" ")
+        ));
+    }
+    Ok(())
+}
+
+/// Refuse Windows-mount paths per principle §2.14. Local copy of the
+/// same check in jam-svc-repo / jam-svc-session / jam-setup — the
+/// canonical implementation hasn't been pulled into jam-tools-core yet.
+fn is_windows_mount(path: &Path) -> bool {
+    let s = path.to_string_lossy();
+    s.starts_with("/mnt/c/")
+        || s.starts_with("/mnt/d/")
+        || s.starts_with("/mnt/e/")
+        || s.starts_with("/cygdrive/")
+        || s.starts_with("c:")
+        || s.starts_with("C:")
 }
 
 // Note: maestro / jam-cli deploys used to run synchronously in the CLI via

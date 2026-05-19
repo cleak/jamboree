@@ -3722,6 +3722,7 @@ fn run_deploy_inner(
         Strategy::AtomicSwap
         | Strategy::StopReplaceRestart { .. }
         | Strategy::CanonicalBinary { .. } => {
+            let from_provided = from.is_some();
             let source = if let Some(path) = from {
                 let path = if path.is_absolute() {
                     path
@@ -3754,6 +3755,24 @@ fn run_deploy_inner(
                 }
                 None => compute_deploy_version(&workspace_root, Some(&source))?,
             };
+            // Services with static assets need those assets shipped
+            // alongside the binary. Today ui-server is the only such
+            // service: the JS/CSS bundle is built by vite into ui/dist
+            // and the running server reads it from
+            // /home/maestro/.jam/ui/dist. Rebuild + sync here so the
+            // standard `jam deploy ui-server` flow ships the binary AND
+            // the new UI, not just the binary. Without this, UI-only
+            // PRs land in main but the running server keeps serving
+            // the old bundle until install-substrate.sh re-runs.
+            //
+            // Order matters: sync the bundle BEFORE the
+            // StopReplaceRestart picks up the new binary, so when
+            // ui-server restarts it serves the new bundle on the first
+            // request. Failure here aborts the deploy; the binary is
+            // never staged.
+            if service == "ui-server" && !from_provided {
+                sync_ui_bundle(&workspace_root)?;
+            }
             eprintln!(
                 "publishing patch.staged for {service} {version} from {}",
                 source.display()
@@ -3822,6 +3841,109 @@ fn cargo_build_release_crate(workspace_root: &Path, crate_name: &str) -> Result<
         return Err(format!("cargo build -p {crate_name} failed: {status}"));
     }
     Ok(())
+}
+
+/// Rebuild the UI bundle and atomically swap it into ui-server's runtime
+/// dist dir. Invoked by `jam deploy ui-server` before the binary patch
+/// gets staged so the restarted server serves the new bundle on the first
+/// request.
+///
+/// Uses sudo -u maestro for the destination writes (maestro owns
+/// `~maestro/.jam/ui/`); the build itself runs as caleb because that's
+/// where the npm + node toolchain lives.
+fn sync_ui_bundle(workspace_root: &Path) -> Result<(), String> {
+    // §2.14 Native FS only: refuse to build/copy from a Windows mount.
+    // npm and vite on /mnt/c are nondeterministic and breaks the linux-
+    // only deployment principle. Mirrors the is_windows_mount check in
+    // jam-svc-repo / jam-svc-session / jam-setup.
+    if is_windows_mount(workspace_root) {
+        return Err(format!(
+            "workspace_root {} lives on a Windows filesystem mount; refusing per principle §2.14 (Native FS only)",
+            workspace_root.display()
+        ));
+    }
+    let ui_dir = workspace_root.join("ui");
+    if !ui_dir.join("package.json").is_file() {
+        return Err(format!(
+            "expected UI package at {} (missing package.json)",
+            ui_dir.display()
+        ));
+    }
+    eprintln!("building UI bundle (npm run build)");
+    let status = ProcessCommand::new("npm")
+        .args(["run", "build"])
+        .current_dir(&ui_dir)
+        .status()
+        .map_err(|err| format!("run npm run build: {err}"))?;
+    if !status.success() {
+        return Err(format!("npm run build failed: {status}"));
+    }
+    let dist = ui_dir.join("dist");
+    if !dist.is_dir() {
+        return Err(format!(
+            "expected vite output at {} after build",
+            dist.display()
+        ));
+    }
+    // Atomic-ish swap via maestro: stage to dist.new, swap directory
+    // names so the runtime dir is always coherent. cp + mv is a tiny
+    // window vs. true atomic rename, but vite's dist is many files so
+    // we accept the tradeoff (alternative: rsync into place).
+    //
+    // Each step runs as a separate ProcessCommand instead of a single
+    // `bash -c "<interpolated script>"` so the dist path is passed as
+    // a positional argument and never lexed by a shell — no chance of
+    // shell-metacharacter injection if the path ever has unusual
+    // characters.
+    eprintln!("syncing ui/dist to /home/maestro/.jam/ui/dist (as maestro)");
+    const UI_ROOT: &str = "/home/maestro/.jam/ui";
+    const DIST: &str = "/home/maestro/.jam/ui/dist";
+    const DIST_NEW: &str = "/home/maestro/.jam/ui/dist.new";
+    const DIST_OLD: &str = "/home/maestro/.jam/ui/dist.old";
+    sudo_maestro(&["mkdir", "-p", UI_ROOT])?;
+    sudo_maestro(&["rm", "-rf", "--", DIST_NEW])?;
+    sudo_maestro(&["cp", "-r", "--", &dist.to_string_lossy(), DIST_NEW])?;
+    sudo_maestro(&["rm", "-rf", "--", DIST_OLD])?;
+    // Only rename existing dist out of the way if it actually exists.
+    // `mv DIST DIST_OLD` would fail if DIST is missing, which would
+    // break the very-first install path.
+    if Path::new(DIST).exists() {
+        sudo_maestro(&["mv", "--", DIST, DIST_OLD])?;
+    }
+    sudo_maestro(&["mv", "--", DIST_NEW, DIST])?;
+    sudo_maestro(&["rm", "-rf", "--", DIST_OLD])?;
+    eprintln!("UI bundle synced");
+    Ok(())
+}
+
+/// Run `sudo -n -u maestro <args>` and bail on non-zero exit.
+fn sudo_maestro(args: &[&str]) -> Result<(), String> {
+    let mut sudo_args = vec!["-n", "-u", "maestro"];
+    sudo_args.extend_from_slice(args);
+    let status = ProcessCommand::new("sudo")
+        .args(&sudo_args)
+        .status()
+        .map_err(|err| format!("sudo -u maestro {}: {err}", args.join(" ")))?;
+    if !status.success() {
+        return Err(format!(
+            "sudo -u maestro {} failed: {status}",
+            args.join(" ")
+        ));
+    }
+    Ok(())
+}
+
+/// Refuse Windows-mount paths per principle §2.14. Local copy of the
+/// same check in jam-svc-repo / jam-svc-session / jam-setup — the
+/// canonical implementation hasn't been pulled into jam-tools-core yet.
+fn is_windows_mount(path: &Path) -> bool {
+    let s = path.to_string_lossy();
+    s.starts_with("/mnt/c/")
+        || s.starts_with("/mnt/d/")
+        || s.starts_with("/mnt/e/")
+        || s.starts_with("/cygdrive/")
+        || s.starts_with("c:")
+        || s.starts_with("C:")
 }
 
 // Note: maestro / jam-cli deploys used to run synchronously in the CLI via

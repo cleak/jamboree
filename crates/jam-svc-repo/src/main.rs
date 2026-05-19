@@ -1946,24 +1946,45 @@ async fn run_command(
     timeout: Duration,
     kind: &'static str,
 ) -> Result<CommandOutput, RepoError> {
-    let output = tokio::time::timeout(timeout, command.output())
-        .await
-        .map_err(|_| {
-            RepoError::protocol(
-                "command-timeout",
-                format!("{kind} exceeded {}s", timeout.as_secs()),
-                "Check network connectivity and GitHub CLI authentication.",
-                "principle-failure-surfaces-immediately",
-            )
-        })?
-        .map_err(|err| {
-            RepoError::protocol(
-                "command-exec-failed",
-                format!("failed to run {kind}: {err}"),
-                "Verify git and gh are installed for the service user.",
-                "principle-failure-surfaces-immediately",
-            )
-        })?;
+    // Retry on ETXTBSY (errno 26): Linux briefly refuses exec on a file
+    // that another fd had open for write. In production this can hit
+    // mid-`jam deploy` swap (the patch-agent's atomic-rename window is
+    // small but not zero); in tests it hits when fixtures freshly write
+    // an executable script. `fsync` after write isn't enough on busy
+    // CI runners — the kernel's busy-text flag clears asynchronously.
+    // Quick exponential backoff (10/20/40/80 ms) before bubbling up.
+    const ETXTBSY: i32 = 26;
+    let output = {
+        let mut attempt = 0_u32;
+        loop {
+            let result = tokio::time::timeout(timeout, command.output()).await;
+            match result {
+                Err(_) => {
+                    return Err(RepoError::protocol(
+                        "command-timeout",
+                        format!("{kind} exceeded {}s", timeout.as_secs()),
+                        "Check network connectivity and GitHub CLI authentication.",
+                        "principle-failure-surfaces-immediately",
+                    ));
+                }
+                Ok(Ok(output)) => break output,
+                Ok(Err(err)) => {
+                    if attempt < 4 && err.raw_os_error() == Some(ETXTBSY) {
+                        let delay = Duration::from_millis(10_u64 << attempt);
+                        tokio::time::sleep(delay).await;
+                        attempt += 1;
+                        continue;
+                    }
+                    return Err(RepoError::protocol(
+                        "command-exec-failed",
+                        format!("failed to run {kind}: {err}"),
+                        "Verify git and gh are installed for the service user.",
+                        "principle-failure-surfaces-immediately",
+                    ));
+                }
+            }
+        }
+    };
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
@@ -3249,14 +3270,29 @@ exit 1
         fn write_script(&self, body: &str) {
             assert!(self.tmp.path().is_dir());
             let staged = self.tmp.path().join("gh.staged");
-            fs::write(&staged, body).unwrap();
-            let mut permissions = fs::metadata(&staged).unwrap().permissions();
+            // Explicit File::create + sync_all + drop guarantees the
+            // kernel has released the write fd before the rename + exec
+            // path runs. Plain fs::write was racing with Linux's
+            // ETXTBSY check on busy CI runners — Command::output()
+            // would panic with "Text file busy (os error 26)" because
+            // the busy-text flag hadn't cleared by the time gh was
+            // exec'd.
             #[cfg(unix)]
             {
+                use std::io::Write;
                 use std::os::unix::fs::PermissionsExt;
+                let mut file = std::fs::File::create(&staged).unwrap();
+                file.write_all(body.as_bytes()).unwrap();
+                file.sync_all().unwrap();
+                drop(file);
+                let mut permissions = fs::metadata(&staged).unwrap().permissions();
                 permissions.set_mode(0o755);
+                fs::set_permissions(&staged, permissions).unwrap();
             }
-            fs::set_permissions(&staged, permissions).unwrap();
+            #[cfg(not(unix))]
+            {
+                fs::write(&staged, body).unwrap();
+            }
             fs::rename(staged, &self.script).unwrap();
         }
     }

@@ -418,15 +418,27 @@ async fn execute_with_retry(config: &Config, request: &TempyrWriteRequest) -> Wr
 }
 
 async fn execute_once(config: &Config, request: &TempyrWriteRequest) -> Result<(), String> {
-    let mut command = Command::new(&config.tempyr_bin);
-    command.args(&request.args);
-    if let Some(worktree) = &request.worktree {
-        command.current_dir(worktree);
-    }
-    let output = command
-        .output()
-        .await
-        .map_err(|err| format!("run {}: {err}", config.tempyr_bin.display()))?;
+    // ETXTBSY retry: same Linux race documented in
+    // jam-svc-repo::run_command — exec briefly refused on a file whose
+    // write fd was just closed. Hits CI tests that write fake-tempyr
+    // and immediately exec it.
+    const ETXTBSY: i32 = 26;
+    let mut attempt = 0_u32;
+    let output = loop {
+        let mut command = Command::new(&config.tempyr_bin);
+        command.args(&request.args);
+        if let Some(worktree) = &request.worktree {
+            command.current_dir(worktree);
+        }
+        match command.output().await {
+            Ok(out) => break out,
+            Err(err) if attempt < 4 && err.raw_os_error() == Some(ETXTBSY) => {
+                tokio::time::sleep(Duration::from_millis(10_u64 << attempt)).await;
+                attempt += 1;
+            }
+            Err(err) => return Err(format!("run {}: {err}", config.tempyr_bin.display())),
+        }
+    };
     if output.status.success() {
         return Ok(());
     }
@@ -639,8 +651,6 @@ mod tests {
 
     #[cfg(unix)]
     fn fake_tempyr(root: &Path, succeed_second: bool) -> PathBuf {
-        use std::os::unix::fs::PermissionsExt;
-
         let script = root.join("fake-tempyr");
         // Sentinel-flag scheme: the first invocation creates the flag file
         // and fails; subsequent invocations see the flag and succeed.
@@ -661,11 +671,29 @@ mod tests {
         } else {
             "#!/bin/sh\necho 'fake tempyr failed' >&2\nexit 1\n".into()
         };
-        fs::write(&script, body).unwrap();
-        let mut permissions = fs::metadata(&script).unwrap().permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&script, permissions).unwrap();
+        write_executable_for_test(&script, &body);
         script
+    }
+
+    /// Write `body` to `path`, chmod 0755, and fsync so the kernel
+    /// fully releases the write fd before the caller exec's the file.
+    /// Plain `fs::write` + `fs::set_permissions` races with Linux's
+    /// ETXTBSY check on busy CI runners — `Command::output()` panics
+    /// with "Text file busy (os error 26)". Explicit
+    /// File::create + sync_all + drop avoids that window.
+    #[cfg(unix)]
+    fn write_executable_for_test(path: &Path, body: &str) {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        let mut file = std::fs::File::create(path).expect("create test script");
+        file.write_all(body.as_bytes()).expect("write test script");
+        file.sync_all().expect("fsync test script");
+        drop(file);
+        let mut perms = std::fs::metadata(path)
+            .expect("stat test script")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(path, perms).expect("chmod test script");
     }
 
     #[cfg(not(unix))]

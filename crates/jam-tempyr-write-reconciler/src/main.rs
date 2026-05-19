@@ -642,18 +642,21 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let script = root.join("fake-tempyr");
-        // Use a directory-as-counter scheme: each invocation creates a
-        // numbered subdir under `state/`, then counts how many exist. This
-        // avoids the read-then-write race the previous in-place rewrite had
-        // (which intermittently flaked on CI runners where the kernel
-        // hadn't flushed the truncate before the next subprocess opened
-        // the file). `mkdir` is atomic; the count derived from it is a
-        // strict monotonic clock for "how many invocations so far".
-        let state_dir = root.join("attempts.d");
+        // Sentinel-flag scheme: the first invocation creates the flag file
+        // and fails; subsequent invocations see the flag and succeed.
+        //
+        // Previous attempts at this used read-then-write counters and
+        // mkdir+ls-wc dir counters; both intermittently flaked on CI
+        // (the read+write had a flush race; the dir counter inexplicably
+        // returned attempts=3 once). `[ -e flag ]` is atomic against
+        // a single concurrent writer's `touch flag`, and
+        // `execute_with_retry` runs invocations strictly sequentially,
+        // so there is no race here at all.
+        let flag = root.join("fake-tempyr.seen");
         let body = if succeed_second {
             format!(
-                "#!/bin/sh\nset -e\nmkdir -p {state}\nmkdir -m 0700 {state}/$(date +%s%N).$$\nn=$(ls -1 {state} | wc -l)\nif [ \"$n\" -lt 2 ]; then echo \"fake tempyr failed (attempt $n)\" >&2; exit 1; fi\nexit 0\n",
-                state = state_dir.display()
+                "#!/bin/sh\nif [ -e {flag} ]; then exit 0; fi\n: > {flag}\necho 'fake tempyr failed (first call)' >&2\nexit 1\n",
+                flag = flag.display()
             )
         } else {
             "#!/bin/sh\necho 'fake tempyr failed' >&2\nexit 1\n".into()

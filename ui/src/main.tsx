@@ -1349,7 +1349,7 @@ function TasksView(props: {
             <span>
               {hiddenCount()} stale task{hiddenCount() === 1 ? "" : "s"} hidden
               <span class="ml-1 text-[#9aa195]">
-                (failed/merged &gt; 24h or older than 7 days)
+                (failed/merged/picker-completed &gt; 24h or older than 7 days)
               </span>
             </span>
             <button
@@ -1381,6 +1381,14 @@ function isStaleTask(row: TaskRow): boolean {
   const ONE_DAY = 24 * 60 * 60 * 1000;
   const SEVEN_DAYS = 7 * ONE_DAY;
   if (row.status === "failed" || row.status === "abandoned" || row.status === "merged") {
+    return ageMs > ONE_DAY;
+  }
+  // `picker-completed` means the picker exited cleanly but post-picker
+  // never moved the task forward (open-pr failed, continuation cap fired
+  // before task.failed was emitted, etc.). Anything still stuck there
+  // after a day is a dead task that won't recover on its own — hide it
+  // so the dashboard's "ready for PR" list reflects actually-pending PRs.
+  if (row.status === "picker-completed") {
     return ageMs > ONE_DAY;
   }
   // Older-than-7d catches "backlog" entries that never got picked up plus

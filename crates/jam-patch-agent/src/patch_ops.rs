@@ -582,14 +582,22 @@ fn install_via_atomic_rename(staging_path: &Path, runtime_path: &Path) -> Result
 }
 
 fn process_compose_call(args: &[&str]) -> Result<(), String> {
+    // The systemd-launched supervisor talks over a unix socket; -U -u
+    // <socket> is required for any process-compose subcommand that hits
+    // its API. Without it the CLI tries TCP localhost:8080 and fails
+    // with "connection refused". The socket path matches what
+    // /etc/systemd/system/jam.service passes to `up`.
+    const SOCK: &str = "/home/maestro/.jam/process-compose.sock";
+    let mut full: Vec<&str> = vec!["-U", "-u", SOCK];
+    full.extend_from_slice(args);
     let status = std::process::Command::new("/opt/jam/bin/process-compose")
-        .args(args)
+        .args(&full)
         .status()
-        .map_err(|err| format!("run process-compose {}: {err}", args.join(" ")))?;
+        .map_err(|err| format!("run process-compose {}: {err}", full.join(" ")))?;
     if !status.success() {
         return Err(format!(
             "process-compose {} failed (exit {})",
-            args.join(" "),
+            full.join(" "),
             status
                 .code()
                 .map_or_else(|| "signal".to_owned(), |c| c.to_string())
@@ -599,11 +607,12 @@ fn process_compose_call(args: &[&str]) -> Result<(), String> {
 }
 
 fn wait_for_process_running(name: &str, timeout: Duration) -> Result<(), String> {
+    const SOCK: &str = "/home/maestro/.jam/process-compose.sock";
     let deadline = std::time::Instant::now() + timeout;
     let mut last_status = String::from("unknown");
     loop {
         let output = std::process::Command::new("/opt/jam/bin/process-compose")
-            .args(["process", "list", "-o", "json"])
+            .args(["-U", "-u", SOCK, "process", "list", "-o", "json"])
             .output()
             .map_err(|err| format!("run process-compose process list: {err}"))?;
         if output.status.success() {

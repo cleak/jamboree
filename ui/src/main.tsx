@@ -1671,7 +1671,7 @@ function RunLogPanel(props: {
   const sendPrompt = async () => {
     const bodyText = prompt().trim();
     const token = props.token.trim();
-    const sessionId = props.sessionId.trim();
+    const sessionId = (props.sessionId ?? "").trim();
     setSendError("");
     if (!token) {
       setSendError("token required");
@@ -2972,8 +2972,10 @@ function statusLabel(status: string) {
   return labels[normalized] ?? normalized.replaceAll("-", " ");
 }
 
-function normalizeStatus(status: string) {
-  return status.trim().toLowerCase().replaceAll("_", "-") || "unknown";
+function normalizeStatus(status: unknown) {
+  return typeof status === "string"
+    ? status.trim().toLowerCase().replaceAll("_", "-") || "unknown"
+    : "unknown";
 }
 
 function KeyValue(props: { label: string; value: string }) {
@@ -4573,8 +4575,8 @@ function isPendingDeliveryStatus(status: string) {
   return ["sending", "queued", "interrupt-requested", "interrupt-accepted"].includes(status);
 }
 
-function conciseDetail(detail: string) {
-  const trimmed = detail.trim();
+function conciseDetail(detail: unknown) {
+  const trimmed = typeof detail === "string" ? detail.trim() : "";
   if (!trimmed || trimmed === "{}") {
     return "";
   }
@@ -4898,10 +4900,13 @@ function formatPayload(event: BusEvent) {
 }
 
 function formatUnknown(value: unknown) {
+  if (value === undefined || value === null) {
+    return "";
+  }
   if (typeof value === "string") {
     return value;
   }
-  return JSON.stringify(value, null, 2);
+  return JSON.stringify(value, null, 2) ?? "";
 }
 
 function loadTheme(): ThemeMode {

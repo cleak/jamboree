@@ -345,6 +345,28 @@ Cmnd_Alias JAM_INSTALL_BIN = $JAM_INSTALL_BIN_DEST
 $HUMAN_USER  ALL=(root) NOPASSWD: JAM_INSTALL_BIN
 $MAESTRO_USER ALL=(root) NOPASSWD: JAM_INSTALL_BIN
 
+# $HUMAN_USER + $MAESTRO_USER -> root for controlling the jam.service
+# systemd unit. Scoped to the exact verbs we need on the exact unit
+# name: no general systemctl access. Enables the orchestrator to
+# restart itself end-to-end (jam-cli + patch-agent can hit this
+# without an interactive password prompt) and lets caleb operate the
+# substrate without falling back to a root shell.
+#
+# Excluded on purpose: \`disable\`, \`mask\`, \`edit\`, and anything
+# that touches other units — those are intentional one-off ops that
+# should require an explicit root login.
+Cmnd_Alias JAM_SERVICE_CONTROL = /usr/bin/systemctl restart jam.service, \\
+                                  /usr/bin/systemctl stop jam.service, \\
+                                  /usr/bin/systemctl start jam.service, \\
+                                  /usr/bin/systemctl status jam.service, \\
+                                  /usr/bin/systemctl is-active jam.service, \\
+                                  /usr/bin/systemctl is-enabled jam.service, \\
+                                  /usr/bin/systemctl reload jam.service, \\
+                                  /usr/bin/systemctl enable jam.service, \\
+                                  /usr/bin/journalctl -u jam.service *
+$HUMAN_USER  ALL=(root) NOPASSWD: JAM_SERVICE_CONTROL
+$MAESTRO_USER ALL=(root) NOPASSWD: JAM_SERVICE_CONTROL
+
 # Allow these transitions to preserve specified env vars (trace IDs, secrets)
 # SETENV permits the caller to use sudo's -E or --preserve-env=KEY1,KEY2 flags
 Defaults!/usr/bin/* setenv

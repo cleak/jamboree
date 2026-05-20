@@ -29,3 +29,12 @@ needs a live multi-harness runtime. The tracker implementation and synthetic
 smokes are complete; local runtime now has `jam/pickers/deepseek-api-key`, so
 unblock by scheduling a manual quota-burn window with the runtime services up
 and a real OpenCode reroute target available.
+
+Dashboard repair note (2026-05-18): `jam-svc-observe` now checks first-party
+subscription harnesses live on each `query-quota`: `codex login status` for
+Codex CLI and `claude auth status --json` for Claude Code. These checks do not
+burn quota and are intentionally treated as account/tier freshness, not
+remaining-counter truth. The UI now refreshes `/api/quotas` every 30 seconds
+and shows live subscription status next to journal/config-derived remaining
+headroom plus API-budget rows for DeepSeek, OpenRouter, or other configured API
+providers.

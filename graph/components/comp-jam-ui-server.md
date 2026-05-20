@@ -56,3 +56,5 @@ outside `JAM_UI_ALLOW_BIND_ADDRS`, defaulting to `127.0.0.1` and
 static/NATS setup while `100.64.0.1:8787` passes the bind guard.
 
 Runs as `maestro` user under multi-user model (security-setup §7.6). UI session tokens still attribute actions per-user-id; journal records `from: human:caleb` for UI-initiated actions, not `from: maestro`.
+
+Quota dashboard note (2026-05-18): the active UI route calls authenticated `GET /api/quotas` (with `/api/quota` kept as a compatibility alias), refreshes every 30 seconds, and displays live subscription-harness probe status alongside journal/config-derived remaining quota, API provider/model budgets, and price-event-backed API work such as DeepSeek or OpenRouter.

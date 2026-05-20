@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -62,6 +62,8 @@ struct ObserveConfig {
     github_repo: String,
     gh_bin: PathBuf,
     github_lookup: bool,
+    codex_bin: PathBuf,
+    claude_bin: PathBuf,
 }
 
 impl ObserveConfig {
@@ -86,6 +88,10 @@ impl ObserveConfig {
             .unwrap_or_else(|_| "cleak/blueberry".into());
         let gh_bin = std::env::var_os("JAM_GH_BIN").map_or_else(|| "gh".into(), PathBuf::from);
         let github_lookup = parse_bool_env("JAM_OBSERVE_GITHUB_LOOKUP").unwrap_or(true);
+        let codex_bin =
+            std::env::var_os("JAM_CODEX_BIN").map_or_else(|| "codex".into(), PathBuf::from);
+        let claude_bin =
+            std::env::var_os("JAM_CLAUDE_BIN").map_or_else(|| "claude".into(), PathBuf::from);
         Self {
             journal_root,
             quota_config_path,
@@ -94,6 +100,8 @@ impl ObserveConfig {
             github_repo,
             gh_bin,
             github_lookup,
+            codex_bin,
+            claude_bin,
         }
     }
 }
@@ -324,6 +332,8 @@ struct HarnessQuotaState {
     usage: Option<QuotaUsageState>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     price_events: Vec<PriceEventState>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    live_probe: Option<LiveQuotaProbe>,
     observed_at: DateTime<Utc>,
 }
 
@@ -382,6 +392,16 @@ struct PriceEventState {
     input_rate_per_1m: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     output_rate_per_1m: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct LiveQuotaProbe {
+    checked_at: DateTime<Utc>,
+    status: String,
+    command: String,
+    detail: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tier: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1528,7 +1548,7 @@ fn freshness_with_quota(
             fresh(
                 now,
                 format!(
-                    "{} quota window states loaded from journal",
+                    "{} quota window states loaded from live probes, journal, or config",
                     quotas.states.len()
                 ),
             )
@@ -1675,6 +1695,9 @@ fn read_quota_states(config: &ObserveConfig, now: DateTime<Utc>) -> QuotaFacts {
             }
         }
     }
+
+    apply_live_quota_probes(config, &mut facts, now, &mut details);
+    facts.available = true;
 
     facts.detail = details.join("; ");
     facts
@@ -2059,6 +2082,7 @@ fn apply_quota_exhausted(payload: &serde_json::Value, facts: &mut QuotaFacts) {
             api_budget: None,
             usage: None,
             price_events: Vec::new(),
+            live_probe: None,
             observed_at,
         },
     );
@@ -2093,6 +2117,7 @@ fn apply_quota_exhausted_soon(payload: &serde_json::Value, facts: &mut QuotaFact
             api_budget: None,
             usage: None,
             price_events: Vec::new(),
+            live_probe: None,
             observed_at,
         },
     );
@@ -2117,6 +2142,7 @@ fn apply_quota_refilled(payload: &serde_json::Value, facts: &mut QuotaFacts) {
             api_budget: None,
             usage: None,
             price_events: Vec::new(),
+            live_probe: None,
             observed_at,
         },
     );
@@ -2192,8 +2218,186 @@ fn configured_quota_state(
         api_budget: None,
         usage: None,
         price_events: Vec::new(),
+        live_probe: None,
         observed_at,
     }
+}
+
+fn apply_live_quota_probes(
+    config: &ObserveConfig,
+    facts: &mut QuotaFacts,
+    now: DateTime<Utc>,
+    details: &mut Vec<String>,
+) {
+    let codex = probe_codex_quota(&config.codex_bin, now);
+    details.push(format!("{}: {}", codex.command, codex.detail));
+    for window_kind in ["local-messages", "cloud-tasks", "code-reviews"] {
+        merge_live_probe(
+            facts,
+            "codex-cli",
+            window_kind,
+            codex.clone(),
+            now,
+            "Codex CLI subscription status checked live; remaining headroom comes from quota journal/config observations",
+        );
+    }
+
+    let claude = probe_claude_quota(&config.claude_bin, now);
+    details.push(format!("{}: {}", claude.command, claude.detail));
+    merge_live_probe(
+        facts,
+        "claude-code",
+        "rate-limit",
+        claude,
+        now,
+        "Claude Code subscription status checked live; remaining headroom comes from quota journal/config observations",
+    );
+}
+
+fn merge_live_probe(
+    facts: &mut QuotaFacts,
+    harness: &str,
+    window_kind: &str,
+    probe: LiveQuotaProbe,
+    now: DateTime<Utc>,
+    fallback_detail: &str,
+) {
+    let key = quota_key(harness, window_kind);
+    let state = facts.states.entry(key).or_insert_with(|| {
+        configured_quota_state(
+            harness,
+            window_kind,
+            "unknown",
+            fallback_detail.to_owned(),
+            "live.harness-status",
+            now,
+        )
+    });
+    if state.status == "unknown" {
+        state.source.clone_from(&probe.command);
+        fallback_detail.clone_into(&mut state.detail);
+        state.observed_at = now;
+    }
+    state.live_probe = Some(probe);
+}
+
+fn probe_codex_quota(codex_bin: &Path, now: DateTime<Utc>) -> LiveQuotaProbe {
+    match run_probe_command(codex_bin, &["login", "status"], Duration::from_secs(2)) {
+        Ok(output) => {
+            let detail = first_nonempty_line(&output).unwrap_or_else(|| "no status output".into());
+            let status = if detail.to_ascii_lowercase().contains("logged in") {
+                "ok"
+            } else {
+                "unknown"
+            };
+            LiveQuotaProbe {
+                checked_at: now,
+                status: status.into(),
+                command: "live.codex.login-status".into(),
+                detail,
+                tier: None,
+            }
+        }
+        Err(detail) => LiveQuotaProbe {
+            checked_at: now,
+            status: "unavailable".into(),
+            command: "live.codex.login-status".into(),
+            detail,
+            tier: None,
+        },
+    }
+}
+
+fn probe_claude_quota(claude_bin: &Path, now: DateTime<Utc>) -> LiveQuotaProbe {
+    match run_probe_command(
+        claude_bin,
+        &["auth", "status", "--json"],
+        Duration::from_secs(2),
+    ) {
+        Ok(output) => {
+            let value = serde_json::from_str::<serde_json::Value>(&output).unwrap_or_default();
+            let logged_in = value
+                .get("loggedIn")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            let tier = value_string(&value, "subscriptionType");
+            let detail = if logged_in {
+                format!(
+                    "logged in via {}{}",
+                    value_string(&value, "authMethod").unwrap_or_else(|| "unknown auth".into()),
+                    tier.as_deref()
+                        .map(|tier| format!(" on {tier}"))
+                        .unwrap_or_default()
+                )
+            } else {
+                "not logged in".into()
+            };
+            LiveQuotaProbe {
+                checked_at: now,
+                status: if logged_in { "ok" } else { "unavailable" }.into(),
+                command: "live.claude.auth-status".into(),
+                detail,
+                tier,
+            }
+        }
+        Err(detail) => LiveQuotaProbe {
+            checked_at: now,
+            status: "unavailable".into(),
+            command: "live.claude.auth-status".into(),
+            detail,
+            tier: None,
+        },
+    }
+}
+
+fn run_probe_command(bin: &Path, args: &[&str], timeout: Duration) -> Result<String, String> {
+    let mut child = Command::new(bin)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|err| format!("spawn {}: {err}", bin.display()))?;
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                let output = child
+                    .wait_with_output()
+                    .map_err(|err| format!("read {} output: {err}", bin.display()))?;
+                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+                if output.status.success() {
+                    return Ok(stdout);
+                }
+                let detail = if stderr.is_empty() { stdout } else { stderr };
+                return Err(format!(
+                    "{} exited {}: {detail}",
+                    bin.display(),
+                    output.status
+                ));
+            }
+            Ok(None) if started.elapsed() >= timeout => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!(
+                    "{} timed out after {}ms",
+                    bin.display(),
+                    timeout.as_millis()
+                ));
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(25)),
+            Err(err) => return Err(format!("wait {}: {err}", bin.display())),
+        }
+    }
+}
+
+fn first_nonempty_line(output: &str) -> Option<String> {
+    output
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn quota_key_identity(key: &str) -> Result<(String, String), String> {
@@ -2776,6 +2980,8 @@ mod tests {
                 github_repo: "cleak/blueberry".into(),
                 gh_bin: PathBuf::from("gh"),
                 github_lookup: false,
+                codex_bin: PathBuf::from("/tmp/jam-observe-test-missing-codex"),
+                claude_bin: PathBuf::from("/tmp/jam-observe-test-missing-claude"),
             },
         }
     }

@@ -1349,7 +1349,7 @@ function TasksView(props: {
             <span>
               {hiddenCount()} stale task{hiddenCount() === 1 ? "" : "s"} hidden
               <span class="ml-1 text-[#9aa195]">
-                (failed/merged/picker-completed &gt; 24h or older than 7 days)
+                (abandoned hidden immediately; failed/merged/picker-completed &gt; 24h; anything else &gt; 7 days)
               </span>
             </span>
             <button
@@ -1380,7 +1380,14 @@ function isStaleTask(row: TaskRow): boolean {
   const ageMs = Date.now() - row.updatedAt.getTime();
   const ONE_DAY = 24 * 60 * 60 * 1000;
   const SEVEN_DAYS = 7 * ONE_DAY;
-  if (row.status === "failed" || row.status === "abandoned" || row.status === "merged") {
+  // `abandoned` is an explicit terminal action by the operator (jam task
+  // abandon) — hide immediately. `failed` and `merged` are also terminal
+  // but get a 1-day grace window for the operator to investigate the
+  // most-recent ones.
+  if (row.status === "abandoned") {
+    return true;
+  }
+  if (row.status === "failed" || row.status === "merged") {
     return ageMs > ONE_DAY;
   }
   // `picker-completed` means the picker exited cleanly but post-picker

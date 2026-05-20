@@ -1,1 +1,1 @@
-test: e2e sanity comment 2026-05-18
+Handle sparse prompt acknowledgements in the run log

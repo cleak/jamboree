@@ -338,6 +338,7 @@ fn app(state: AppState, static_dir: &Path) -> Router {
         .route("/api/auth/check", get(auth_check))
         .route("/api/events/recent", get(recent_events_handler))
         .route("/api/quota", get(quota_handler))
+        .route("/api/quotas", get(quota_handler))
         .route("/api/runtime/services", get(runtime_services_handler))
         .route(
             "/api/deploy",

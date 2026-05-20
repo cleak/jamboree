@@ -122,6 +122,9 @@ type QuotaRow = {
   status: string;
   remaining: string;
   usage: string;
+  provider: string;
+  budget: string;
+  live: string;
   detail: string;
   source: string;
   updatedAt: Date;
@@ -412,7 +415,7 @@ function App() {
         });
     };
     load();
-    const timer = window.setInterval(load, 300000);
+    const timer = window.setInterval(load, 30000);
     onCleanup(() => window.clearInterval(timer));
   });
 
@@ -1317,6 +1320,12 @@ function QuotaSnapshotPanel(props: { rows: QuotaRow[]; error: string; refreshedA
                 <div class="grid gap-1 text-xs text-[#62665e]">
                   <div>{row.remaining} remaining</div>
                   <div class="truncate">{row.usage}</div>
+                  <Show when={row.provider !== "-"}>
+                    <div class="truncate">{row.provider}</div>
+                  </Show>
+                  <Show when={row.live !== "-"}>
+                    <div class="truncate">{row.live}</div>
+                  </Show>
                   <Show when={row.detail !== "-"}>
                     <div class="truncate">{row.detail}</div>
                   </Show>
@@ -2308,18 +2317,30 @@ function TraceReplayDetailView(props: { state: TraceReplayState }) {
   );
 }
 
-function QuotasView(props: { rows: QuotaRow[] }) {
+function QuotasView(props: { rows: QuotaRow[]; error: string; refreshedAt: Date | null }) {
   return (
     <Panel title="Quotas">
+      <div class="flex flex-wrap items-center justify-between gap-2 border-b border-[#e0dfd7] px-4 py-3 text-xs text-[#62665e]">
+        <span>{props.rows.length} windows</span>
+        <span>refreshed {latestTime(props.refreshedAt ?? undefined)}</span>
+      </div>
+      <Show when={props.error.length > 0}>
+        <div class="p-4">
+          <ErrorBlock text={props.error} />
+        </div>
+      </Show>
       <Show when={props.rows.length > 0} fallback={<EmptyState text="No quota states." />}>
         <div class="max-w-full overflow-x-auto">
-          <table class="w-full min-w-[680px] border-collapse text-left text-sm">
+          <table class="w-full min-w-[980px] border-collapse text-left text-sm">
             <thead class="border-b border-[#d7ddce] text-xs uppercase text-[#5b6558]">
               <tr>
                 <th class="px-4 py-2 font-medium">Window</th>
                 <th class="px-4 py-2 font-medium">Status</th>
                 <th class="px-4 py-2 font-medium">Remaining</th>
                 <th class="px-4 py-2 font-medium">Usage</th>
+                <th class="px-4 py-2 font-medium">Provider</th>
+                <th class="px-4 py-2 font-medium">Budget</th>
+                <th class="px-4 py-2 font-medium">Live</th>
                 <th class="px-4 py-2 font-medium">Updated</th>
               </tr>
             </thead>
@@ -2333,6 +2354,9 @@ function QuotasView(props: { rows: QuotaRow[] }) {
                     </td>
                     <td class="px-4 py-3">{row.remaining}</td>
                     <td class="px-4 py-3">{row.usage}</td>
+                    <td class="px-4 py-3">{row.provider}</td>
+                    <td class="px-4 py-3">{row.budget}</td>
+                    <td class="px-4 py-3">{row.live}</td>
                     <td class="px-4 py-3 text-[#5b6558]">{latestTime(row.updatedAt)}</td>
                   </tr>
                 )}
@@ -3110,7 +3134,13 @@ function routeView(path: string, data: RouteData) {
     return <TracesView rows={data.traceRows} />;
   }
   if (path === "/quotas") {
-    return <QuotasView rows={data.quotaRows} />;
+    return (
+      <QuotasView
+        rows={data.quotaRows}
+        error={data.quotaError}
+        refreshedAt={data.quotaRefreshedAt}
+      />
+    );
   }
   if (path === "/health") {
     return (
@@ -3188,7 +3218,7 @@ function tasksUrl(token: string) {
 }
 
 function quotaUrl(token: string) {
-  const url = new URL("/api/quota", window.location.href);
+  const url = new URL("/api/quotas", window.location.href);
   url.searchParams.set("token", token);
   return url;
 }
@@ -3477,12 +3507,17 @@ function quotaRowsFromSnapshot(snapshot: QuotaSnapshot | null) {
     .map(([key, value]) => {
       const row = recordFromUnknown(value);
       const usage = objectField(row, "usage");
+      const apiBudget = objectField(row, "api_budget");
+      const liveProbe = objectField(row, "live_probe");
       const observedAt = parseDate(stringField(row, "observed_at"));
       return {
         key,
         status: stringField(row, "status") ?? "unknown",
         remaining: fractionField(row, "remaining") ?? "-",
         usage: usageSummary(row, usage),
+        provider: providerSummary(row, usage, apiBudget),
+        budget: budgetSummary(apiBudget),
+        live: liveProbeSummary(liveProbe),
         detail: stringField(row, "detail") ?? "-",
         source: stringField(row, "source") ?? snapshot.source ?? "tool.observe.query-quota",
         updatedAt: observedAt.getTime() > 0 ? observedAt : fetchedAt
@@ -3593,11 +3628,16 @@ function quotaRowsFromEvents(events: BusEvent[]) {
     const windowKind = stringField(payload, "window_kind") ?? "unknown";
     const key = `${harness}/${windowKind}`;
     const usage = objectField(payload, "usage");
+    const apiBudget = objectField(payload, "api_budget");
+    const liveProbe = objectField(payload, "live_probe");
     rows.set(key, {
       key,
       status: quotaStatus(eventType, payload),
       remaining: fractionField(payload, "remaining") ?? "-",
       usage: usageSummary(payload, usage),
+      provider: providerSummary(payload, usage, apiBudget),
+      budget: budgetSummary(apiBudget),
+      live: liveProbeSummary(liveProbe),
       detail: stringField(payload, "detail") ?? "-",
       source: eventType,
       updatedAt: event.receivedAt
@@ -4475,6 +4515,42 @@ function usageSummary(payload: Record<string, unknown>, usage: Record<string, un
   const cost = numberField(payload, "cost_usd") ?? numberField(usage, "cost_usd");
   const costPart = cost === undefined ? "" : ` $${cost.toFixed(4)}`;
   return `in ${input} / out ${output}${costPart}`;
+}
+
+function providerSummary(
+  payload: Record<string, unknown>,
+  usage: Record<string, unknown>,
+  apiBudget: Record<string, unknown>
+) {
+  const provider =
+    stringField(payload, "provider") ??
+    stringField(usage, "provider") ??
+    stringField(apiBudget, "provider");
+  const model =
+    stringField(payload, "model") ?? stringField(usage, "model") ?? stringField(apiBudget, "model");
+  if (!provider && !model) {
+    return "-";
+  }
+  return [provider, model].filter(Boolean).join(" / ");
+}
+
+function budgetSummary(apiBudget: Record<string, unknown>) {
+  const cap = numberField(apiBudget, "monthly_cap_usd");
+  const spent = numberField(apiBudget, "spent_this_month_usd");
+  if (cap === undefined || spent === undefined) {
+    return "-";
+  }
+  return `$${spent.toFixed(2)} / $${cap.toFixed(2)}`;
+}
+
+function liveProbeSummary(liveProbe: Record<string, unknown>) {
+  const status = stringField(liveProbe, "status");
+  if (!status) {
+    return "-";
+  }
+  const tier = stringField(liveProbe, "tier");
+  const detail = stringField(liveProbe, "detail");
+  return [status, tier, detail].filter(Boolean).join(" · ");
 }
 
 function upsertOutboxStatus(

@@ -727,7 +727,7 @@ async fn open_pr(
             }
         }
         let opened_at = Utc::now();
-        return Ok(OpenPrOutput {
+        let output = OpenPrOutput {
             task_id: input.task_id,
             pr_ref: existing.pr_ref,
             url: existing.url,
@@ -737,7 +737,20 @@ async fn open_pr(
             state: existing.state,
             opened_at,
             trace_id: ctx.trace_id.to_string(),
-        });
+        };
+        // Emit pr.opened on the idempotent path too. Without it, the
+        // task-lifecycle handler never sees the PR exists — task stays
+        // at picker-completed even though the PR is open on GitHub.
+        // Observed concretely on tasks t-260519-dsswdceg (PR #18) and
+        // t-260519-dt8mdgtr (PR #21): jam-svc-repo logged "open-pr is
+        // idempotent on existing PR; returning current pr_ref" and the
+        // task UI stayed at "ready for PR" indefinitely.
+        //
+        // Downstream tempyr-pr-reconciler and pr-status-poller key on
+        // pr_ref so a duplicate pr.opened for the same pr is a no-op
+        // — emitting it from both paths is safe.
+        publish_pr_opened(nats, &output, ctx).await?;
+        return Ok(output);
     }
 
     let (url, token_kind) = gh_pr_create(

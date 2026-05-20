@@ -134,7 +134,7 @@ The CLI waits for `patch.confirmed` or `patch.failed`. On failure it reports an 
 - Runtime, per-version patches: `/home/maestro/.jam/bin/jam-svc-<service>-<version>`. Written by patch-agent during `apply`. The routing manifest points at one of these.
 - Canonical first-install location: `/opt/jam/bin/jam-<name>`. Written by `scripts/install-substrate.sh`. Used for fresh substrate brings, including for `patch-agent` itself.
 
-Caleb (and maestro, since PR #5) has NOPASSWD sudo for installing into `/opt/jam/bin/` via the tightly-scoped `scripts/jam-install-bin` wrapper (installed to `/opt/jam/sbin/jam-install-bin` by `bootstrap-users.sh`, whitelisted in the generated sudoers as `Cmnd_Alias JAM_INSTALL_BIN`). The wrapper refuses sources outside its allowlist (`/home/caleb/jamboree/target/release/`, `/home/maestro/.jam/staging/`, `/home/maestro/.jam/bin/`) and dest names that don't start with `jam` or `jam-`.
+Caleb (and maestro, since PR #5) has NOPASSWD sudo for installing into `/opt/jam/bin/` via the tightly-scoped `scripts/jam-install-bin` wrapper (installed to `/opt/jam/sbin/jam-install-bin` by `bootstrap-users.sh`, whitelisted in the generated sudoers as `Cmnd_Alias JAM_INSTALL_BIN`). The wrapper refuses sources outside its allowlist (`/home/caleb/jamboree/target/release/`, `/home/maestro/.jam/staging/`, `/home/maestro/.jam/bin/`) and dest names that aren't either the exact string `jam` or match `jam-*` (the wrapper's `case "$NAME" in jam|jam-*) ;;` allowlist — `jamfoo` is rejected, `jam-cli` accepted).
 
 ### First-Patch Rollback Gotcha
 

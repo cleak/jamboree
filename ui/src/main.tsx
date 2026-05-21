@@ -2872,11 +2872,11 @@ function StatusSymbol(props: { status: string; compact?: boolean }) {
 function statusMeta(status: string) {
   const normalized = normalizeStatus(status);
   const label = statusLabel(normalized);
-  const success = "border-[#8aa08a] bg-[#f4f7f0] text-[#3f6a42]";
-  const active = "border-[#6f7f9c] bg-[#f1f4fb] text-[#375785]";
-  const waiting = "border-[#b46b14] bg-[#fff6e8] text-[#84500f]";
-  const danger = "border-[#b2332e] bg-[#fff0ee] text-[#8f221d]";
-  const neutral = "border-[#c9c8c0] bg-[#f8f8f4] text-[#575b53]";
+  const success = "jam-status-success";
+  const active = "jam-status-active";
+  const waiting = "jam-status-waiting";
+  const danger = "jam-status-danger";
+  const neutral = "jam-status-neutral";
 
   if (
     [

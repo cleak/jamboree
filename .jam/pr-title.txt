@@ -1,1 +1,1 @@
-Handle sparse prompt acknowledgements in the run log
+fix(ui): improve dark and light theme contrast

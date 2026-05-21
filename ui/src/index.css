@@ -31,6 +31,66 @@ textarea {
   color-scheme: dark;
 }
 
+.jam-status-success {
+  border-color: #8cae8c;
+  background-color: #edf7ed;
+  color: #245c2f;
+}
+
+.jam-status-active {
+  border-color: #8da2c9;
+  background-color: #eef4ff;
+  color: #2d568b;
+}
+
+.jam-status-waiting {
+  border-color: #d39a45;
+  background-color: #fff5df;
+  color: #704500;
+}
+
+.jam-status-danger {
+  border-color: #d9756e;
+  background-color: #fff0ee;
+  color: #8b251f;
+}
+
+.jam-status-neutral {
+  border-color: #c9ced6;
+  background-color: #f6f7f8;
+  color: #4f5661;
+}
+
+.theme-dark .jam-status-success {
+  border-color: #3d7b50;
+  background-color: #143421;
+  color: #b7efc5;
+}
+
+.theme-dark .jam-status-active {
+  border-color: #416996;
+  background-color: #172a44;
+  color: #c4defe;
+}
+
+.theme-dark .jam-status-waiting {
+  border-color: #8a6228;
+  background-color: #372714;
+  color: #f7d59b;
+}
+
+.theme-dark .jam-status-danger {
+  border-color: #8b4640;
+  background-color: #421d1b;
+  color: #ffb8b1;
+}
+
+.theme-dark .jam-status-neutral {
+  border-color: #555b64;
+  background-color: #2d3035;
+  color: #d8dce4;
+}
+
 .theme-dark [class*="bg-[#f7f7f8]"],
 .theme-dark [class*="bg-[#f6f6f3]"],
 .theme-dark [class*="bg-[#f4f4f5]"],
@@ -50,11 +110,17 @@ textarea {
 .theme-dark [class*="text-[#161815]"],
 .theme-dark [class*="text-[#202020]"],
 .theme-dark [class*="text-[#252922]"],
+.theme-dark [class*="text-[#254c2b]"],
+.theme-dark [class*="text-[#284b35]"],
 .theme-dark [class*="text-[#333333]"],
 .theme-dark [class*="text-[#3c4439]"],
 .theme-dark [class*="text-[#3f443c]"],
 .theme-dark [class*="text-[#444444]"] {
   color: #ececf1 !important;
+}
+
+.theme-dark [class*="text-[#2f6f4f]"] {
+  color: #8fd8af !important;
 }
 
 .theme-dark [class*="text-[#62665e]"],
@@ -75,8 +141,37 @@ textarea {
 
 .theme-dark [class*="hover:bg-[#eeeeef]"]:hover,
 .theme-dark [class*="hover:bg-[#e9e9ea]"]:hover,
-.theme-dark [class*="hover:bg-[#f0f0ea]"]:hover {
+.theme-dark [class*="hover:bg-[#f0f0ea]"]:hover,
+.theme-dark [class*="hover:bg-[#eef2e8]"]:hover,
+.theme-dark [class*="hover:bg-[#f1f4ec]"]:hover {
   background-color: #343541 !important;
+}
+
+.theme-dark [class*="bg-[#f0f0ea]"],
+.theme-dark [class*="bg-[#f1f4ec]"],
+.theme-dark [class*="bg-[#eef2e8]"],
+.theme-dark [class*="bg-[#dfe8d5]"],
+.theme-dark [class*="bg-[#f1f8ea]"],
+.theme-dark [class*="bg-[#fbeded]"],
+.theme-dark [class*="bg-[#fff2d8]"],
+.theme-dark [class*="bg-[#fff0ee]"],
+.theme-dark [class*="bg-[#f4f7f0]"],
+.theme-dark [class*="bg-[#f1f4fb]"],
+.theme-dark [class*="bg-[#fff6e8]"],
+.theme-dark [class*="bg-[#f8f8f4]"] {
+  background-color: #2d3035 !important;
+}
+
+.theme-dark [class*="text-[#7a4d00]"] {
+  color: #f7d59b !important;
+}
+
+.theme-dark [class*="text-[#7a2a29]"],
+.theme-dark [class*="text-[#8f221d]"],
+.theme-dark [class*="text-[#9a2b1f]"],
+.theme-dark [class*="text-[#a02828]"],
+.theme-dark [class*="text-[#a23a2a]"] {
+  color: #ffb8b1 !important;
 }
 
 .theme-dark input,

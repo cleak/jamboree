@@ -25,3 +25,4 @@ pub mod paths;
 /// Path-safe workspace key newtype.
 pub mod workspace;
 // e2e sanity 2026-05-18
+// e2e verify 2026-05-23 05-52 UTC

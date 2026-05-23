@@ -397,23 +397,27 @@ impl Transition {
                 copy_string(node, &envelope.payload, "touched_paths", "touched-paths");
             }
             Self::TaskFailed => {
-                node.set_str("status", "failed");
-                copy_string(node, &envelope.payload, "reason", "outcome");
-                copy_string(node, &envelope.payload, "reason", "failure-reason");
-                copy_string(node, &envelope.payload, "detail", "failure-detail");
-                copy_string(node, &envelope.payload, "failed_at", "failed-at");
-                copy_string(
-                    node,
-                    &envelope.payload,
-                    "source_event_type",
-                    "failure-source",
-                );
+                if current_status.as_deref() != Some("merged") {
+                    node.set_str("status", "failed");
+                    copy_string(node, &envelope.payload, "reason", "outcome");
+                    copy_string(node, &envelope.payload, "reason", "failure-reason");
+                    copy_string(node, &envelope.payload, "detail", "failure-detail");
+                    copy_string(node, &envelope.payload, "failed_at", "failed-at");
+                    copy_string(
+                        node,
+                        &envelope.payload,
+                        "source_event_type",
+                        "failure-source",
+                    );
+                }
             }
             Self::TaskAbandoned => {
-                node.set_str("status", "abandoned");
-                copy_string(node, &envelope.payload, "reason", "outcome");
-                copy_string(node, &envelope.payload, "reason", "abandoned-reason");
-                copy_string(node, &envelope.payload, "abandoned_at", "abandoned-at");
+                if current_status.as_deref() != Some("merged") {
+                    node.set_str("status", "abandoned");
+                    copy_string(node, &envelope.payload, "reason", "outcome");
+                    copy_string(node, &envelope.payload, "reason", "abandoned-reason");
+                    copy_string(node, &envelope.payload, "abandoned_at", "abandoned-at");
+                }
             }
         }
     }
@@ -860,6 +864,49 @@ mod tests {
         // Metadata still recorded for telemetry / debug.
         assert!(raw.contains("session-id: codex-cli:late-resume"));
         assert!(raw.contains("merged-sha: abc123"));
+    }
+
+    #[test]
+    fn merged_task_does_not_demote_on_late_task_failed() {
+        // Continuation cap on a stale review-received was demoting merged
+        // tasks to failed. Concrete repro: PR #25 close triggered a
+        // github review-received → continuation cap → task.failed →
+        // merged became failed. Guard rejects the transition.
+        let tmp = TempDir::new().unwrap();
+        let config = test_config(tmp.path());
+        apply_lifecycle_event(
+            &config,
+            &envelope(
+                "pr.merged",
+                serde_json::json!({
+                    "task_id": "task-1",
+                    "pr_ref": "cleak/blueberry#42",
+                    "merged_sha": "abc123",
+                    "merged_by": "caleb",
+                    "merged_at": "2026-05-21T05:32:25Z"
+                }),
+            ),
+        )
+        .unwrap();
+
+        let result = apply_lifecycle_event(
+            &config,
+            &envelope(
+                "task.failed",
+                serde_json::json!({
+                    "task_id": "task-1",
+                    "reason": "continuation-cap-review-received",
+                    "detail": "Post-picker continuation hit attempt cap",
+                    "failed_at": "2026-05-23T06:36:08Z",
+                    "source_event_type": "picker.continuation-needed"
+                }),
+            ),
+        )
+        .unwrap()
+        .unwrap();
+        let raw = fs::read_to_string(result.task_path).unwrap();
+
+        assert!(raw.contains("status: merged"), "{raw}");
     }
 
     #[test]

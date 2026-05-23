@@ -2604,7 +2604,7 @@ function TaskTable(props: { rows: TaskRow[]; compact?: boolean }) {
               <article class="grid gap-2 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
                 <div class="min-w-0">
                   <a
-                    class="text-sm font-medium text-[#284b35] hover:underline"
+                    class="jam-task-title-link text-sm font-medium hover:underline"
                     href={`/tasks/${encodeURIComponent(row.taskId)}`}
                   >
                     {taskDisplayName(row)}
@@ -2646,7 +2646,7 @@ function TaskTable(props: { rows: TaskRow[]; compact?: boolean }) {
               <article class="grid min-w-0 gap-3 px-4 py-3 lg:grid-cols-[minmax(0,2fr)_minmax(7rem,0.75fr)_minmax(0,0.7fr)_minmax(0,0.85fr)_minmax(0,0.7fr)_minmax(0,0.9fr)_minmax(6.5rem,0.75fr)] lg:items-center">
                 <div class="min-w-0">
                   <a
-                    class="block break-words font-medium leading-5 text-[#284b35] hover:underline"
+                    class="jam-task-title-link block break-words font-medium leading-5 hover:underline"
                     href={`/tasks/${encodeURIComponent(row.taskId)}`}
                   >
                     {taskDisplayName(row)}

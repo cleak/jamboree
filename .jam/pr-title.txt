@@ -1,1 +1,1 @@
-test: e2e verify self-mod pipeline 2026-05-23 05-52 UTC
+fix(ui): improve dark mode contrast

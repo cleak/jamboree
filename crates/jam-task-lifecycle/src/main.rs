@@ -13,6 +13,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use chrono::{DateTime, Utc};
+use clap::Parser;
 use futures::StreamExt;
 use jam_events::generated::{Event, TempyrTaskUpdated};
 use jam_events::EventEnvelope;
@@ -25,6 +26,19 @@ use tracing::{debug, error, info, warn};
 
 const SERVICE_NAME: &str = "jam-task-lifecycle";
 const SERVICE_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Reconcile Tempyr task nodes from Picker/PR journal events and run the
+/// post-picker open-pr/continuation handshake.
+///
+/// The daemon takes no flags — it reads NATS/journal config from env. Args
+/// are parsed via clap so an accidental `--help` invocation prints help and
+/// exits instead of silently joining the `journal.>` subscriber pool, which
+/// would duplicate every continuation. (Observed on 2026-05-21 / 2026-05-23
+/// where a stray `jam-task-lifecycle --help` ran for days, producing twin
+/// `picker.continuation-needed` events with the same trace_id.)
+#[derive(Debug, Parser)]
+#[command(name = SERVICE_NAME, version, about, long_about = None)]
+struct Cli {}
 const DEFAULT_CANONICAL_WORKTREE: &str = "/home/caleb/blueberry-jam";
 const DEFAULT_GRAPH_RELPATH: &str = "graph";
 const TASK_ID_MAX_LEN: usize = 128;
@@ -119,6 +133,9 @@ struct UpdateResult {
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
+    // Parse first so `--help` / `--version` / unknown flags exit cleanly
+    // instead of dropping into the NATS subscriber loop. See Cli docstring.
+    let _ = Cli::parse();
     if let Err(err) = run().await {
         error!("jam-task-lifecycle fatal: {err}");
         return std::process::ExitCode::FAILURE;

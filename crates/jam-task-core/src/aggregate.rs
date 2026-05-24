@@ -208,9 +208,19 @@ impl TaskAggregate {
     }
 
     /// Compute the new status from the event, or None if no transition.
+    ///
+    /// Each arm guards the source state — only valid origin states produce
+    /// transitions. Invalid sources return None (event recorded, no status
+    /// change). Terminal states are already filtered before this is called.
     fn compute_transition(&self, event: &TaskEvent) -> Option<TaskStatus> {
         match event {
-            TaskEvent::PickerAssigned { .. } => Some(TaskStatus::Active),
+            TaskEvent::PickerAssigned { .. } => {
+                if matches!(self.status, TaskStatus::Queued | TaskStatus::Active) {
+                    Some(TaskStatus::Active)
+                } else {
+                    None
+                }
+            }
 
             TaskEvent::PickerSucceeded { .. } => {
                 if self.status == TaskStatus::Active {
@@ -220,21 +230,18 @@ impl TaskAggregate {
                 }
             }
 
-            TaskEvent::PickerFailed { .. } => {
-                // Picker failure triggers continuation or terminal failure.
-                // The aggregate stays Active for now — the lifecycle service
-                // will decide whether to continue or fail, and apply the
-                // appropriate follow-up event.
-                None
-            }
+            TaskEvent::PickerFailed { .. } | TaskEvent::ContinuationRequested { .. } => None,
 
-            TaskEvent::ContinuationRequested { .. } => {
-                // Requesting a continuation doesn't change status by itself.
-                // ContinuationDispatched moves back to Active.
-                None
+            TaskEvent::ContinuationDispatched { .. } => {
+                if matches!(
+                    self.status,
+                    TaskStatus::PostPicker | TaskStatus::InReview | TaskStatus::Active
+                ) {
+                    Some(TaskStatus::Active)
+                } else {
+                    None
+                }
             }
-
-            TaskEvent::ContinuationDispatched { .. } => Some(TaskStatus::Active),
 
             TaskEvent::PrOpened { .. } => {
                 if matches!(self.status, TaskStatus::PostPicker | TaskStatus::Active) {
@@ -244,13 +251,15 @@ impl TaskAggregate {
                 }
             }
 
-            TaskEvent::ReviewReceived { .. } | TaskEvent::CiStatusChanged { .. } => {
-                // These don't change status directly. The lifecycle service
-                // decides whether to request a continuation.
-                None
-            }
+            TaskEvent::ReviewReceived { .. } | TaskEvent::CiStatusChanged { .. } => None,
 
-            TaskEvent::PrMerged { .. } => Some(TaskStatus::Merged),
+            TaskEvent::PrMerged { .. } => {
+                if self.status == TaskStatus::InReview {
+                    Some(TaskStatus::Merged)
+                } else {
+                    None
+                }
+            }
 
             TaskEvent::Failed { .. } => Some(TaskStatus::Failed),
 
@@ -279,7 +288,9 @@ impl TaskAggregate {
             TaskEvent::PickerSucceeded { session_id, .. }
             | TaskEvent::PickerFailed { session_id, .. } => {
                 if self.current_session_id.as_deref() == Some(session_id) {
-                    // Session is no longer active
+                    self.current_session_id = None;
+                    self.current_harness = None;
+                    self.worktree_path = None;
                 }
             }
 

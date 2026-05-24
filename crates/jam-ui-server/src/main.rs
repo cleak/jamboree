@@ -950,7 +950,11 @@ async fn task_events_handler(
                         serde_json::json!({
                             "version": e.version,
                             "event_type": e.event_type,
-                            "payload": serde_json::from_str::<serde_json::Value>(&e.payload).unwrap_or_default(),
+                            "payload": serde_json::from_str::<serde_json::Value>(&e.payload)
+                                .unwrap_or_else(|err| serde_json::json!({
+                                    "raw": e.payload,
+                                    "parse_error": err.to_string(),
+                                })),
                             "trace_id": e.trace_id,
                             "timestamp": e.timestamp,
                             "idempotency_key": e.idempotency_key,

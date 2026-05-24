@@ -173,11 +173,18 @@ async fn run() -> Result<(), ServiceError> {
     let store_path = std::env::var_os("JAM_TASK_STORE_PATH")
         .map_or_else(|| PathBuf::from(DEFAULT_TASK_STORE_PATH), PathBuf::from);
     if let Some(parent) = store_path.parent() {
-        fs::create_dir_all(parent).ok();
+        fs::create_dir_all(parent).map_err(|err| {
+            ServiceError::Subscribe(format!(
+                "failed to create parent dir for task store at {}: {err}. \
+                 Fix: ensure the directory is writable by the maestro user.",
+                parent.display()
+            ))
+        })?;
     }
     let store = jam_task_store::TaskStore::open(&store_path).map_err(|err| {
         ServiceError::Subscribe(format!(
-            "failed to open task store at {}: {err}",
+            "failed to open task store at {}: {err}. \
+             Fix: check file permissions and disk space.",
             store_path.display()
         ))
     })?;
@@ -341,20 +348,29 @@ fn append_to_store(
         Err(jam_task_store::AppendError::VersionConflict {
             expected, actual, ..
         }) => {
-            // Retry once with fresh version — concurrent append from a
-            // different event for the same task within the same batch.
+            // Retry once with fresh version and re-translated event.
+            // The has_pr flag may have changed since the first translation
+            // (another event for this task landed concurrently), so
+            // re-derive the domain event with up-to-date aggregate state.
             debug!(
                 task = %task_id,
                 expected,
                 actual,
-                "event store: version conflict, retrying with fresh version",
+                "event store: version conflict, retrying with fresh state",
             );
-            match store.append(task_id, &domain_event, &trace_str, actual, Some(&idem_key)) {
-                Ok(outcome) => {
-                    debug!(task = %task_id, ?outcome, "event store: retry succeeded");
-                }
-                Err(err) => {
-                    warn!(task = %task_id, error = %err, "event store: retry failed");
+            let fresh_has_pr = store
+                .load(task_id)
+                .ok()
+                .flatten()
+                .is_some_and(|agg| agg.has_pr());
+            if let Some(fresh_event) = adapter::translate(envelope, fresh_has_pr) {
+                match store.append(task_id, &fresh_event, &trace_str, actual, Some(&idem_key)) {
+                    Ok(outcome) => {
+                        debug!(task = %task_id, ?outcome, "event store: retry succeeded");
+                    }
+                    Err(err) => {
+                        warn!(task = %task_id, error = %err, "event store: retry failed");
+                    }
                 }
             }
         }

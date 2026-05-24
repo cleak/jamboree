@@ -237,10 +237,7 @@ impl TaskAggregate {
             TaskEvent::ContinuationDispatched { .. } => Some(TaskStatus::Active),
 
             TaskEvent::PrOpened { .. } => {
-                if matches!(
-                    self.status,
-                    TaskStatus::PostPicker | TaskStatus::Active
-                ) {
+                if matches!(self.status, TaskStatus::PostPicker | TaskStatus::Active) {
                     Some(TaskStatus::InReview)
                 } else {
                     None
@@ -286,17 +283,12 @@ impl TaskAggregate {
                 }
             }
 
-            TaskEvent::ContinuationRequested {
-                phase,
-                ..
-            } => match phase {
+            TaskEvent::ContinuationRequested { phase, .. } => match phase {
                 ContinuationPhase::PrePr => self.pre_pr_continuations += 1,
                 ContinuationPhase::PostPr => self.post_pr_continuations += 1,
             },
 
-            TaskEvent::ContinuationDispatched {
-                new_session_id, ..
-            } => {
+            TaskEvent::ContinuationDispatched { new_session_id, .. } => {
                 self.current_session_id = Some(new_session_id.clone());
             }
 
@@ -334,9 +326,7 @@ impl TaskAggregate {
             }
 
             TaskEvent::CiStatusChanged {
-                ci_status,
-                pr_ref,
-                ..
+                ci_status, pr_ref, ..
             } => {
                 if let Some(pr) = &mut self.pr {
                     pr.ci_status = Some(ci_status.clone());
@@ -580,9 +570,7 @@ mod tests {
     use super::*;
 
     fn ts(s: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(s)
-            .unwrap()
-            .with_timezone(&Utc)
+        DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
     }
 
     fn requested_event() -> TaskEvent {
@@ -947,10 +935,7 @@ mod tests {
         })
         .unwrap();
 
-        assert_eq!(
-            agg.pr().unwrap().ci_status.as_deref(),
-            Some("failure")
-        );
+        assert_eq!(agg.pr().unwrap().ci_status.as_deref(), Some("failure"));
     }
 
     #[test]

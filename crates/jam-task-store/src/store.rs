@@ -103,12 +103,11 @@ impl TaskStore {
         }
 
         // 2. Check optimistic concurrency
-        let actual_version: u64 = tx
-            .query_row(
-                "SELECT COALESCE(MAX(version), 0) FROM task_events WHERE stream_id = ?1",
-                params![task_id],
-                |row| row.get(0),
-            )?;
+        let actual_version: u64 = tx.query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM task_events WHERE stream_id = ?1",
+            params![task_id],
+            |row| row.get(0),
+        )?;
         if actual_version != expected_version {
             return Err(AppendError::VersionConflict {
                 task_id: task_id.to_owned(),
@@ -180,18 +179,12 @@ impl TaskStore {
         if !has_events {
             return Ok(None);
         }
-        let trace_id = self
-            .conn
-            .query_row(
-                "SELECT trace_id FROM task_events WHERE stream_id = ?1 ORDER BY version ASC LIMIT 1",
-                params![task_id],
-                |row| row.get::<_, String>(0),
-            )?;
-        Ok(Some(load_aggregate_in_tx(
-            &self.conn,
-            task_id,
-            &trace_id,
-        )?))
+        let trace_id = self.conn.query_row(
+            "SELECT trace_id FROM task_events WHERE stream_id = ?1 ORDER BY version ASC LIMIT 1",
+            params![task_id],
+            |row| row.get::<_, String>(0),
+        )?;
+        Ok(Some(load_aggregate_in_tx(&self.conn, task_id, &trace_id)?))
     }
 
     /// List all tasks matching a filter, using the materialized projection.
@@ -230,9 +223,10 @@ impl TaskStore {
     /// Garbage-collect expired idempotency keys.
     pub fn gc_idempotency_keys(&self) -> Result<usize, AppendError> {
         let now = Utc::now().to_rfc3339();
-        let deleted =
-            self.conn
-                .execute("DELETE FROM idempotency_keys WHERE expires_at < ?1", params![now])?;
+        let deleted = self.conn.execute(
+            "DELETE FROM idempotency_keys WHERE expires_at < ?1",
+            params![now],
+        )?;
         if deleted > 0 {
             debug!(deleted, "garbage-collected expired idempotency keys");
         }
@@ -290,9 +284,7 @@ fn load_aggregate_in_tx(
          WHERE stream_id = ?1 AND version >= ?2
          ORDER BY version ASC",
     )?;
-    let rows = stmt.query_map(params![task_id, replay_from], |row| {
-        row.get::<_, String>(0)
-    })?;
+    let rows = stmt.query_map(params![task_id, replay_from], |row| row.get::<_, String>(0))?;
 
     for row in rows {
         let payload = row?;
@@ -396,7 +388,13 @@ mod tests {
         };
 
         let outcome = store
-            .append("task-1", &event, "trace-1", 0, Some("task.requested:trace-1"))
+            .append(
+                "task-1",
+                &event,
+                "trace-1",
+                0,
+                Some("task.requested:trace-1"),
+            )
             .unwrap();
         assert!(matches!(outcome, ApplyOutcome::Created));
 
@@ -433,9 +431,7 @@ mod tests {
         assert!(matches!(result, Err(AppendError::VersionConflict { .. })));
 
         // Correct version works
-        store
-            .append("task-1", &event2, "trace-2", 1, None)
-            .unwrap();
+        store.append("task-1", &event2, "trace-2", 1, None).unwrap();
     }
 
     #[test]
@@ -619,7 +615,10 @@ mod tests {
 
         let summary = store.get_summary("task-1").unwrap().unwrap();
         assert_eq!(summary.status, "in-progress");
-        assert_eq!(summary.current_session_id.as_deref(), Some("codex-cli:01ABC"));
+        assert_eq!(
+            summary.current_session_id.as_deref(),
+            Some("codex-cli:01ABC")
+        );
         assert_eq!(summary.current_harness.as_deref(), Some("codex-cli"));
     }
 

@@ -104,7 +104,10 @@ pub(crate) fn list_tasks(
         sql.push_str(&format!(" LIMIT ?{}", param_values.len()));
     }
 
-    let param_refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(std::convert::AsRef::as_ref).collect();
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> = param_values
+        .iter()
+        .map(std::convert::AsRef::as_ref)
+        .collect();
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(param_refs.as_slice(), row_to_summary)?;
 

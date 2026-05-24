@@ -851,14 +851,12 @@ async fn tasks_handler(
     // files for backward compatibility when the store isn't initialized yet.
     if let Some(store) = &state.task_store {
         match store.lock() {
-            Ok(s) => {
-                match s.list(&jam_task_store::TaskFilter::default()) {
-                    Ok(summaries) => return Json(summaries).into_response(),
-                    Err(err) => {
-                        info!(error = %err, "task store query failed; falling back to graph files");
-                    }
+            Ok(s) => match s.list(&jam_task_store::TaskFilter::default()) {
+                Ok(summaries) => return Json(summaries).into_response(),
+                Err(err) => {
+                    info!(error = %err, "task store query failed; falling back to graph files");
                 }
-            }
+            },
             Err(err) => {
                 info!(error = %err, "task store lock poisoned; falling back to graph files");
             }

@@ -162,7 +162,16 @@ pub async fn handle_pr_review_received(
          \n\
          Make follow-up commits on the existing branch (do NOT amend or force-push). When your worktree is clean and `.jam/pr-*` reflects the cumulative change, exit.",
     );
-    publish_continuation(nats, &event, "review-received", &detail, &prompt, ctx, store).await;
+    publish_continuation(
+        nats,
+        &event,
+        "review-received",
+        &detail,
+        &prompt,
+        ctx,
+        store,
+    )
+    .await;
 }
 
 /// Handle a `pr.ci.status-changed` event for a failing CI run: emit
@@ -970,7 +979,8 @@ async fn lookup_recent_task_class_in(
             let ts = envelope
                 .get("timestamp")
                 .and_then(|v| v.as_str())
-                .and_then(|s| DateTime::parse_from_rfc3339(s).ok()).map_or_else(Utc::now, |dt| dt.with_timezone(&Utc));
+                .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                .map_or_else(Utc::now, |dt| dt.with_timezone(&Utc));
             match &earliest {
                 Some((existing_ts, _)) if *existing_ts <= ts => {}
                 _ => earliest = Some((ts, class.to_owned())),

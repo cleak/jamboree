@@ -176,7 +176,10 @@ async fn run() -> Result<(), ServiceError> {
         fs::create_dir_all(parent).ok();
     }
     let store = jam_task_store::TaskStore::open(&store_path).map_err(|err| {
-        ServiceError::Subscribe(format!("failed to open task store at {}: {err}", store_path.display()))
+        ServiceError::Subscribe(format!(
+            "failed to open task store at {}: {err}",
+            store_path.display()
+        ))
     })?;
     info!(path = %store_path.display(), "task event store opened");
 
@@ -313,7 +316,13 @@ fn append_to_store(
         .map_or(0, |agg| agg.version());
 
     let trace_str = ctx.trace_id.to_string();
-    match store.append(task_id, &domain_event, &trace_str, current_version, Some(&idem_key)) {
+    match store.append(
+        task_id,
+        &domain_event,
+        &trace_str,
+        current_version,
+        Some(&idem_key),
+    ) {
         Ok(outcome) => {
             debug!(
                 task = %task_id,
@@ -329,7 +338,9 @@ fn append_to_store(
                 "event store: duplicate idempotency key, skipping",
             );
         }
-        Err(jam_task_store::AppendError::VersionConflict { expected, actual, .. }) => {
+        Err(jam_task_store::AppendError::VersionConflict {
+            expected, actual, ..
+        }) => {
             // Retry once with fresh version — concurrent append from a
             // different event for the same task within the same batch.
             debug!(

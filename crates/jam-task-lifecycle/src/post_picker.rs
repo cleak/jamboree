@@ -823,8 +823,10 @@ async fn count_recent_continuations(task_id: &str) -> u32 {
 /// spawn carries the canonical task_class from the dispatcher; later
 /// resumes can themselves drop to defaults if this lookup ever misses).
 async fn lookup_recent_task_class(task_id: &str) -> Option<String> {
-    let journal_root = std::env::var_os("JAM_JOURNAL_ROOT")
-        .map_or_else(|| PathBuf::from("/home/maestro/.jam/journal"), PathBuf::from);
+    let journal_root = std::env::var_os("JAM_JOURNAL_ROOT").map_or_else(
+        || PathBuf::from("/home/maestro/.jam/journal"),
+        PathBuf::from,
+    );
     lookup_recent_task_class_in(&journal_root, task_id, 6).await
 }
 

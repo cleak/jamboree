@@ -4224,8 +4224,7 @@ mod tests {
     #[test]
     fn resolve_deploy_targets_passes_explicit_services_through() {
         let targets =
-            resolve_deploy_targets(vec!["worktree".into(), "maestro".into()], false, None)
-                .unwrap();
+            resolve_deploy_targets(vec!["worktree".into(), "maestro".into()], false, None).unwrap();
         assert_eq!(targets, vec!["worktree", "maestro"]);
     }
 
@@ -4269,17 +4268,18 @@ mod tests {
     fn targets_for_changed_paths_dedupes_ui_via_crate_and_ui_dir() {
         // crates/jam-ui-server/src/main.rs *and* ui/src/main.tsx both touched
         // — must yield exactly one ui-server entry.
-        let paths = vec![
-            "crates/jam-ui-server/src/main.rs",
-            "ui/src/main.tsx",
-        ];
+        let paths = vec!["crates/jam-ui-server/src/main.rs", "ui/src/main.tsx"];
         let targets = targets_for_changed_paths(&paths);
         assert_eq!(targets, vec!["ui-server"]);
     }
 
     #[test]
     fn targets_for_changed_paths_empty_for_irrelevant_paths() {
-        let paths = vec!["docs/proposal-v5.md", "README.md", ".github/workflows/ci.yml"];
+        let paths = vec![
+            "docs/proposal-v5.md",
+            "README.md",
+            ".github/workflows/ci.yml",
+        ];
         assert!(targets_for_changed_paths(&paths).is_empty());
     }
 

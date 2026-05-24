@@ -13,6 +13,8 @@
 
 language: en-US
 early_access: false
+enable_free_tier: true
+inheritance: false
 
 reviews:
   profile: chill
@@ -46,6 +48,10 @@ reviews:
 
 chat:
   auto_reply: true
+
+knowledge_base: {}
+code_generation: {}
+issue_enrichment: {}
 
 # Suggest fewer nits in agentic tasks; the Picker can't always action style
 # nits and we don't want to loop on them.

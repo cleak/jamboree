@@ -116,11 +116,7 @@ log "main moved $prev_sha → $head_sha; computing affected services"
 # duplicate the logic. We pass `--since` and let the CLI decide whether
 # anything actually needs deploying.
 if [[ "${JAM_AUTO_DEPLOY_DRY_RUN:-0}" == "1" ]]; then
-    log "dry-run: jam deploy --since $prev_sha"
-    if ! jam deploy --since "$prev_sha" --help >/dev/null 2>&1; then
-        log "warn: jam binary missing --since support (dry-run)"
-    fi
-    echo "$head_sha" > "$STATE_FILE"
+    log "dry-run: jam deploy --since $prev_sha (watermark NOT advanced)"
     exit 0
 fi
 

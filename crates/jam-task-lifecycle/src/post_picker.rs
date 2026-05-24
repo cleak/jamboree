@@ -313,7 +313,16 @@ pub async fn handle_continuation_needed(
     // restores the prior conversation. Look it up from the most recent
     // picker.spawned in the journal; fall back to None on miss, which
     // matches prior behaviour.
-    let resumed_task_class = lookup_recent_task_class(task_id).await;
+    // §2.7: the journal is untrusted content — validate the looked-up
+    // task_class before forwarding it into the resume-picker request.
+    // svc-session's validate_token rejects anything outside [a-zA-Z0-9._-],
+    // so we mirror that constraint; a malformed class falls back to None.
+    let resumed_task_class = lookup_recent_task_class(task_id).await.filter(|c| {
+        !c.is_empty()
+            && c.len() <= 64
+            && c.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+    });
     let request = ResumePickerRequest {
         task_id,
         prompt,

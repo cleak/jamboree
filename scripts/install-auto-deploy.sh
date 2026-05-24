@@ -57,6 +57,18 @@ if ! id -u "$HUMAN_USER" >/dev/null 2>&1; then
     fail "user $HUMAN_USER does not exist; pass --user <name> or run as the human user via sudo"
 fi
 
+# Handle uninstall before checking the source script — the source checkout
+# may have moved or been deleted, but uninstall should still work.
+if $UNINSTALL; then
+    if $DRY_RUN; then
+        info "(dry-run) would remove $SCRIPT_DEST and $CRON_FILE"
+        exit 0
+    fi
+    rm -f "$SCRIPT_DEST" "$CRON_FILE"
+    pass "uninstalled jam-auto-deploy"
+    exit 0
+fi
+
 if [[ ! -f "$SOURCE_SCRIPT" ]]; then
     fail "source script $SOURCE_SCRIPT not found"
 fi
@@ -73,16 +85,6 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 * * * * * $HUMAN_USER $SCRIPT_DEST
 "
-
-if $UNINSTALL; then
-    if $DRY_RUN; then
-        info "(dry-run) would remove $SCRIPT_DEST and $CRON_FILE"
-        exit 0
-    fi
-    rm -f "$SCRIPT_DEST" "$CRON_FILE"
-    pass "uninstalled jam-auto-deploy"
-    exit 0
-fi
 
 if $DRY_RUN; then
     info "(dry-run) would install $SOURCE_SCRIPT → $SCRIPT_DEST"

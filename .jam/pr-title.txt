@@ -1,1 +1,1 @@
-fix(ui): make editable controls stand out in both themes
+fix(ui): make editable control backgrounds more distinct

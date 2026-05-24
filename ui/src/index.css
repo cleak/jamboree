@@ -7,7 +7,7 @@
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: #172018;
   background: #f5f7f2;
-  --jam-control-bg: #ffffff;
+  --jam-control-bg: #f8fbf4;
   --jam-control-border: #9da89a;
   --jam-control-inner: #eef2e8;
   --jam-control-focus: #284b35;
@@ -49,7 +49,7 @@ textarea {
 ),
 select:not([multiple]),
 textarea:not([data-jam-unstyled]) {
-  background-color: var(--jam-control-bg);
+  background-color: var(--jam-control-bg) !important;
   border-color: var(--jam-control-border);
   box-shadow:
     inset 0 0 0 1px var(--jam-control-inner),
@@ -130,7 +130,7 @@ textarea:not([data-jam-unstyled]):disabled {
   color: #f2f2f4;
   background: #202123;
   color-scheme: dark;
-  --jam-control-bg: #15171a;
+  --jam-control-bg: #191d19;
   --jam-control-border: #767b84;
   --jam-control-inner: #343841;
   --jam-control-focus: #9fd8b3;
@@ -305,4 +305,25 @@ textarea:not([data-jam-unstyled]):disabled {
 .theme-dark code {
   background-color: #17181b !important;
   color: #f2f2f4 !important;
+}
+
+.theme-dark
+  :is(
+    input:not([type]),
+    input[type="date"],
+    input[type="datetime-local"],
+    input[type="email"],
+    input[type="month"],
+    input[type="number"],
+    input[type="password"],
+    input[type="search"],
+    input[type="tel"],
+    input[type="text"],
+    input[type="time"],
+    input[type="url"],
+    input[type="week"]
+  ):not([data-jam-unstyled]),
+.theme-dark select:not([multiple]):not([data-jam-unstyled]),
+.theme-dark textarea:not([data-jam-unstyled]) {
+  background-color: var(--jam-control-bg) !important;
 }

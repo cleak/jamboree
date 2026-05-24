@@ -1,1 +1,1 @@
-fix(ui): improve dark mode contrast
+Make editable UI controls stand out in both themes

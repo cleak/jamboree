@@ -1,16 +1,14 @@
 ## Summary
 
-Improves the Jamboree UI contrast tuning, especially in dark mode:
-
-- gives task title links a semantic green style with stronger dark-mode contrast
-- brightens muted dark-mode text, including gray classes that were not previously remapped
-- tones down status pill foregrounds and backgrounds so tags such as `! FAILED` feel less glaring
-- slightly raises primary dark-mode text contrast
-
-This is UI-only and does not affect runtime services or deployment.
+- Adds shared themed styling for editable UI controls so text fields, textareas, and dropdowns read as intentional input surfaces in light and dark mode.
+- Strengthens control borders, inset definition, shadows, focus rings, placeholder color, disabled states, and select dropdown affordances without changing task target behavior.
 
 ## Verification
 
-- `npm ci` - passed
-- `npm run build` - passed
-- Contrast spot check with a local Node script - changed text and pill pairs are above AA contrast thresholds
+- `cd ui && npm ci` - passed, installed locked dependencies.
+- `cd ui && npm run build` - passed.
+- `tempyr validate` - failed on pre-existing graph errors in `dec-post-picker-coordination` unrelated to this UI-only change.
+
+## Notes
+
+- Recorded the shared-control-styling decision in Tempyr journal entry `j-5ec6b50f2bc5495da5d5c7723788604d`.

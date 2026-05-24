@@ -1,12 +1,19 @@
-//! `jam-task-lifecycle` - Tempyr task lifecycle reconciler (§4.6.2).
+//! `jam-task-lifecycle` - Task lifecycle reconciler (§4.6.2).
 //!
-//! Subscribes to lifecycle journal events, updates the canonical Tempyr task
-//! node under `<canonical-worktree>/<graph-relpath>/tasks/<task-id>.md`, and
-//! emits `journal.tempyr.task-updated`. Fine-grained operational history stays
-//! in the append-only journal; these task nodes are only coarse durable state.
+//! Subscribes to lifecycle journal events and maintains task state via:
+//! 1. **Event store** (`jam-task-store`): SQLite-backed event-sourced aggregate
+//!    with optimistic concurrency and idempotency tracking. This is the
+//!    authoritative source of truth for task state.
+//! 2. **Tempyr task node** (backward compat): YAML frontmatter file under
+//!    `<canonical-worktree>/<graph-relpath>/tasks/<task-id>.md`, derived from
+//!    the aggregate as a side-effect.
+//!
+//! The event store eliminates journal-file scanning for continuation counts
+//! and provides crash-safe, idempotent event processing.
 
 #![deny(missing_docs)]
 
+mod adapter;
 mod post_picker;
 
 use std::fs;
@@ -79,9 +86,13 @@ impl LifecycleError {
     }
 }
 
+/// Default path for the task event store.
+const DEFAULT_TASK_STORE_PATH: &str = "/home/maestro/.jam/task-store.db";
+
 #[derive(Clone)]
 struct LifecycleState {
     config: LifecycleConfig,
+    store: std::sync::Arc<std::sync::Mutex<jam_task_store::TaskStore>>,
 }
 
 #[derive(Debug, Clone)]
@@ -159,10 +170,23 @@ async fn run() -> Result<(), ServiceError> {
         "starting",
     );
 
+    let store_path = std::env::var_os("JAM_TASK_STORE_PATH")
+        .map_or_else(|| PathBuf::from(DEFAULT_TASK_STORE_PATH), PathBuf::from);
+    if let Some(parent) = store_path.parent() {
+        fs::create_dir_all(parent).ok();
+    }
+    let store = jam_task_store::TaskStore::open(&store_path).map_err(|err| {
+        ServiceError::Subscribe(format!("failed to open task store at {}: {err}", store_path.display()))
+    })?;
+    info!(path = %store_path.display(), "task event store opened");
+
     let nats = JamNats::connect(&nats_url, nats_token).await?;
     info!("connected to NATS");
 
-    let state = LifecycleState { config };
+    let state = LifecycleState {
+        config,
+        store: std::sync::Arc::new(std::sync::Mutex::new(store)),
+    };
     let mut sub = nats
         .client()
         .subscribe("journal.>")
@@ -216,30 +240,122 @@ async fn handle_message(
     let envelope = parse_envelope(&msg.payload)?;
     debug!(event_type = %envelope.event_type, "received lifecycle event");
 
+    // --- Event store: translate and append (idempotent) ---
+    let task_id = value_string(&envelope.payload, "task_id");
+    if let Some(ref task_id) = task_id {
+        append_to_store(state, task_id, &envelope, &ctx);
+    }
+
     // Side effect: post-picker coordination. Independent of the Tempyr-node
     // update — even if the node write fails (e.g. concurrent edit), we still
     // want the open-pr-or-continuation decision to fire.
+    //
+    // Post-picker handlers now use the store's aggregate for continuation cap
+    // decisions instead of scanning journal JSONL files.
     match envelope.event_type.as_str() {
         "picker.exited" => {
-            post_picker::handle_picker_exited(nats, &envelope, &ctx).await;
+            post_picker::handle_picker_exited(nats, &envelope, &ctx, &state.store).await;
         }
         "picker.continuation-needed" => {
-            post_picker::handle_continuation_needed(nats, &envelope, &ctx).await;
+            post_picker::handle_continuation_needed(nats, &envelope, &ctx, &state.store).await;
         }
         "pr.review-received" => {
-            post_picker::handle_pr_review_received(nats, &envelope, &ctx).await;
+            post_picker::handle_pr_review_received(nats, &envelope, &ctx, &state.store).await;
         }
         "pr.ci.status-changed" => {
-            post_picker::handle_pr_ci_status_changed(nats, &envelope, &ctx).await;
+            post_picker::handle_pr_ci_status_changed(nats, &envelope, &ctx, &state.store).await;
         }
         _ => {}
     }
 
+    // --- Tempyr node: backward-compat side-effect ---
     let Some(result) = apply_lifecycle_event(&state.config, &envelope)? else {
         return Ok(());
     };
     publish_task_updated(nats, &result, &ctx).await?;
     Ok(())
+}
+
+/// Append a NATS journal event to the task event store.
+///
+/// Translates the NATS event to a domain event via the adapter, then appends
+/// with an idempotency key derived from the trace ID. If the event was already
+/// processed (duplicate key), the append is silently skipped.
+fn append_to_store(
+    state: &LifecycleState,
+    task_id: &str,
+    envelope: &JournalEnvelope,
+    ctx: &TraceCtx,
+) {
+    let Ok(mut store) = state.store.lock() else {
+        warn!("task store lock poisoned; skipping event store append");
+        return;
+    };
+
+    // Check aggregate state for continuation phase decisions
+    let has_pr = store
+        .load(task_id)
+        .ok()
+        .flatten()
+        .is_some_and(|agg| agg.has_pr());
+
+    let Some(domain_event) = adapter::translate(envelope, has_pr) else {
+        return;
+    };
+
+    let idem_key = adapter::idempotency_key(envelope);
+
+    // Get current version for optimistic concurrency
+    let current_version = store
+        .load(task_id)
+        .ok()
+        .flatten()
+        .map_or(0, |agg| agg.version());
+
+    let trace_str = ctx.trace_id.to_string();
+    match store.append(task_id, &domain_event, &trace_str, current_version, Some(&idem_key)) {
+        Ok(outcome) => {
+            debug!(
+                task = %task_id,
+                event = %envelope.event_type,
+                ?outcome,
+                "event store: appended",
+            );
+        }
+        Err(jam_task_store::AppendError::DuplicateIdempotencyKey { key }) => {
+            debug!(
+                task = %task_id,
+                key = %key,
+                "event store: duplicate idempotency key, skipping",
+            );
+        }
+        Err(jam_task_store::AppendError::VersionConflict { expected, actual, .. }) => {
+            // Retry once with fresh version — concurrent append from a
+            // different event for the same task within the same batch.
+            debug!(
+                task = %task_id,
+                expected,
+                actual,
+                "event store: version conflict, retrying with fresh version",
+            );
+            match store.append(task_id, &domain_event, &trace_str, actual, Some(&idem_key)) {
+                Ok(outcome) => {
+                    debug!(task = %task_id, ?outcome, "event store: retry succeeded");
+                }
+                Err(err) => {
+                    warn!(task = %task_id, error = %err, "event store: retry failed");
+                }
+            }
+        }
+        Err(err) => {
+            warn!(
+                task = %task_id,
+                event = %envelope.event_type,
+                error = %err,
+                "event store: append failed",
+            );
+        }
+    }
 }
 
 fn parse_envelope(payload: &[u8]) -> Result<JournalEnvelope, LifecycleError> {

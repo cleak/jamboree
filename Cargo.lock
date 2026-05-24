@@ -1721,6 +1721,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "jam-task-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "jam-task-lifecycle"
 version = "0.1.0"
 dependencies = [
@@ -1729,6 +1739,8 @@ dependencies = [
  "futures",
  "jam-events",
  "jam-nats",
+ "jam-task-core",
+ "jam-task-store",
  "jam-tools-core",
  "jam-trace",
  "serde",
@@ -1739,6 +1751,20 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "jam-task-store"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "jam-task-core",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
@@ -1833,6 +1859,7 @@ dependencies = [
  "hex",
  "jam-events",
  "jam-nats",
+ "jam-task-store",
  "jam-tools-core",
  "jam-trace",
  "rand 0.8.6",

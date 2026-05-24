@@ -21,6 +21,8 @@ members = [
     "crates/jam-tempyr-write-reconciler",
     "crates/jam-untrusted",
     "crates/jam-trunk-fetcher",
+    "crates/jam-task-core",
+    "crates/jam-task-store",
     "crates/jam-task-lifecycle",
     "crates/jam-patch-agent",
     "crates/jam-svc-observe",

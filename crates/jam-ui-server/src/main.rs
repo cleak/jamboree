@@ -40,6 +40,7 @@ struct AppState {
     session_log_root: PathBuf,
     task_graph_root: PathBuf,
     tool_timeout: Duration,
+    task_store: Option<Arc<std::sync::Mutex<jam_task_store::TaskStore>>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -315,6 +316,23 @@ async fn run() -> Result<(), UiServerError> {
     }
 
     let nats = JamNats::connect(&nats_url, nats_token).await?;
+
+    let task_store_path = jam_home.join("task-store.db");
+    let task_store = match jam_task_store::TaskStore::open(&task_store_path) {
+        Ok(store) => {
+            info!(path = %task_store_path.display(), "task event store opened (read)");
+            Some(Arc::new(std::sync::Mutex::new(store)))
+        }
+        Err(err) => {
+            info!(
+                path = %task_store_path.display(),
+                error = %err,
+                "task event store not available; falling back to graph-based task queries"
+            );
+            None
+        }
+    };
+
     let state = AppState {
         nats,
         token_store: TokenStore::from_jam_home(&jam_home),
@@ -322,6 +340,7 @@ async fn run() -> Result<(), UiServerError> {
         session_log_root: session_log_root(&jam_home),
         task_graph_root: task_graph_root(&jam_home),
         tool_timeout,
+        task_store,
     };
 
     let app = app(state, &static_dir);
@@ -344,6 +363,8 @@ fn app(state: AppState, static_dir: &Path) -> Router {
             get(deploy_targets_handler).post(deploy_handler),
         )
         .route("/api/tasks", get(tasks_handler).post(task_spawn_handler))
+        .route("/api/tasks/{task_id}", get(task_detail_handler))
+        .route("/api/tasks/{task_id}/events", get(task_events_handler))
         .route("/api/tasks/{task_id}/resume", post(task_resume_handler))
         .route("/api/trace/{trace_id}", get(trace_replay_handler))
         .route("/api/traces/find", get(trace_find_handler))
@@ -825,9 +846,132 @@ async fn tasks_handler(
         }
     }
 
+    // Prefer the event store when available — it has richer, pre-computed
+    // state with proper continuation tracking. Fall back to the Tempyr graph
+    // files for backward compatibility when the store isn't initialized yet.
+    if let Some(store) = &state.task_store {
+        match store.lock() {
+            Ok(s) => {
+                match s.list(&jam_task_store::TaskFilter::default()) {
+                    Ok(summaries) => return Json(summaries).into_response(),
+                    Err(err) => {
+                        info!(error = %err, "task store query failed; falling back to graph files");
+                    }
+                }
+            }
+            Err(err) => {
+                info!(error = %err, "task store lock poisoned; falling back to graph files");
+            }
+        }
+    }
+
     match task_graph_rows(&state.task_graph_root) {
         Ok(rows) => Json(rows).into_response(),
         Err(err) => trace_error_response(StatusCode::INTERNAL_SERVER_ERROR, "tasks-failed", err),
+    }
+}
+
+/// Get a single task's full state from the event store.
+async fn task_detail_handler(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<TokenQuery>,
+    AxumPath(task_id): AxumPath<String>,
+) -> impl IntoResponse {
+    match token_is_valid(&state.token_store, &query.token) {
+        Ok(true) => {}
+        Ok(false) => return StatusCode::UNAUTHORIZED.into_response(),
+        Err(err) => {
+            error!("task detail auth failed: {err}");
+            return trace_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "auth-check-failed",
+                err.to_string(),
+            );
+        }
+    }
+
+    let Some(store) = &state.task_store else {
+        return trace_error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "store-unavailable",
+            "task event store not initialized".to_string(),
+        );
+    };
+
+    match store.lock() {
+        Ok(s) => match s.get_summary(&task_id) {
+            Ok(Some(summary)) => Json(summary).into_response(),
+            Ok(None) => StatusCode::NOT_FOUND.into_response(),
+            Err(err) => trace_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "task-detail-failed",
+                err.to_string(),
+            ),
+        },
+        Err(err) => trace_error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store-lock-failed",
+            err.to_string(),
+        ),
+    }
+}
+
+/// Get the full event history for a task from the event store.
+async fn task_events_handler(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<TokenQuery>,
+    AxumPath(task_id): AxumPath<String>,
+) -> impl IntoResponse {
+    match token_is_valid(&state.token_store, &query.token) {
+        Ok(true) => {}
+        Ok(false) => return StatusCode::UNAUTHORIZED.into_response(),
+        Err(err) => {
+            error!("task events auth failed: {err}");
+            return trace_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "auth-check-failed",
+                err.to_string(),
+            );
+        }
+    }
+
+    let Some(store) = &state.task_store else {
+        return trace_error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "store-unavailable",
+            "task event store not initialized".to_string(),
+        );
+    };
+
+    match store.lock() {
+        Ok(s) => match s.events(&task_id) {
+            Ok(events) => {
+                let response: Vec<serde_json::Value> = events
+                    .into_iter()
+                    .map(|e| {
+                        serde_json::json!({
+                            "version": e.version,
+                            "event_type": e.event_type,
+                            "payload": serde_json::from_str::<serde_json::Value>(&e.payload).unwrap_or_default(),
+                            "trace_id": e.trace_id,
+                            "timestamp": e.timestamp,
+                            "idempotency_key": e.idempotency_key,
+                        })
+                    })
+                    .collect();
+                Json(response).into_response()
+            }
+            Err(err) => trace_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "task-events-failed",
+                err.to_string(),
+            ),
+        },
+        Err(err) => trace_error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store-lock-failed",
+            err.to_string(),
+        ),
     }
 }
 

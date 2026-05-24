@@ -806,20 +806,79 @@ fn is_unrecoverable_remote_failure(err: &str) -> bool {
     .any(|needle| lower.contains(needle))
 }
 
-/// Count prior `picker.continuation-needed` events recorded today for this
-/// task. Used to populate the `attempt` field so the cap actually fires.
-/// Returns 0 if the journal file isn't readable yet.
+/// Count prior `picker.continuation-needed` events for this task,
+/// starting from the most recent `pr.opened`. Pre-PR rounds (no-commits,
+/// invalid-pr-title, open-pr-failed, …) are a separate phase from the
+/// post-PR review loop — burning cap budget on picker-quality issues
+/// before the PR even opens leaves almost nothing for the CI/review
+/// cycle where the real work happens.
+///
+/// Concrete trigger: t-260524-ntc1v68d used 3 pre-PR rounds then hit
+/// the cap at the first transient CI failure, never getting a real
+/// review cycle.
+///
+/// Walks today's picker journal and pr journal. If a `pr.opened` event
+/// exists for this task, only continuations *after* that timestamp
+/// count. If no PR was opened yet, all continuations count (the pre-PR
+/// cap still applies). Returns 0 when the journal is unreadable.
 async fn count_recent_continuations(task_id: &str) -> u32 {
     let date = Utc::now().format("%Y-%m-%d");
-    let path = format!("/home/maestro/.jam/journal/{date}/journal.picker.jsonl");
-    let Ok(content) = tokio::fs::read_to_string(&path).await else {
+    let journal_root = std::env::var_os("JAM_JOURNAL_ROOT").map_or_else(
+        || PathBuf::from("/home/maestro/.jam/journal"),
+        PathBuf::from,
+    );
+    let picker_path = journal_root
+        .join(date.to_string())
+        .join("journal.picker.jsonl");
+    let pr_path = journal_root.join(date.to_string()).join("journal.pr.jsonl");
+
+    let Ok(picker_content) = tokio::fs::read_to_string(&picker_path).await else {
         return 0;
     };
-    let needle = format!("\"task_id\":\"{task_id}\"");
-    let event_marker = "\"event_type\":\"picker.continuation-needed\"";
-    let count = content
+
+    let task_needle = format!("\"task_id\":\"{task_id}\"");
+
+    // Find the timestamp of the most recent pr.opened for this task.
+    // Continuations before that point are pre-PR and don't count toward
+    // the post-PR cap.
+    let pr_opened_cutoff = tokio::fs::read_to_string(&pr_path)
+        .await
+        .ok()
+        .and_then(|pr_content| {
+            let opened_marker = "\"event_type\":\"pr.opened\"";
+            pr_content
+                .lines()
+                .filter(|line| line.contains(opened_marker) && line.contains(&task_needle))
+                .filter_map(|line| {
+                    serde_json::from_str::<serde_json::Value>(line)
+                        .ok()?
+                        .get("timestamp")?
+                        .as_str()
+                        .map(ToOwned::to_owned)
+                })
+                .last()
+        });
+
+    let continuation_marker = "\"event_type\":\"picker.continuation-needed\"";
+    let count = picker_content
         .lines()
-        .filter(|line| line.contains(event_marker) && line.contains(&needle))
+        .filter(|line| line.contains(continuation_marker) && line.contains(&task_needle))
+        .filter(|line| {
+            let Some(ref cutoff) = pr_opened_cutoff else {
+                return true;
+            };
+            // Fast string-compare on the ISO timestamp embedded in the JSON.
+            // The timestamp field always appears as `"timestamp":"<rfc3339>"`,
+            // so extracting via a quick parse is reliable enough for a
+            // comparison against the cutoff.
+            let ts = serde_json::from_str::<serde_json::Value>(line)
+                .ok()
+                .and_then(|v| v.get("timestamp")?.as_str().map(ToOwned::to_owned));
+            match ts {
+                Some(t) => t.as_str() > cutoff.as_str(),
+                None => true,
+            }
+        })
         .count();
     u32::try_from(count).unwrap_or(u32::MAX)
 }

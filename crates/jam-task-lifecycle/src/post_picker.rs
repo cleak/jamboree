@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use jam_events::generated::PickerContinuationNeeded;
 use jam_events::Event;
 use jam_nats::JamNats;
@@ -305,16 +305,35 @@ pub async fn handle_continuation_needed(
         return;
     }
 
+    // Preserve the original task_class across the resume chain. Without
+    // this, every continuation lands in jam-svc-session with task_class
+    // defaulting to "light-edit" (see SpawnSpec::for_resume) — visible in
+    // the picker.spawned payload for any resumed picker, and it shifts the
+    // resource-limits/budget policy for the picker even though codex
+    // restores the prior conversation. Look it up from the most recent
+    // picker.spawned in the journal; fall back to None on miss, which
+    // matches prior behaviour.
+    // §2.7: the journal is untrusted content — validate the looked-up
+    // task_class before forwarding it into the resume-picker request.
+    // svc-session's validate_token rejects anything outside [a-zA-Z0-9._-],
+    // so we mirror that constraint; a malformed class falls back to None.
+    let resumed_task_class = lookup_recent_task_class(task_id).await.filter(|c| {
+        !c.is_empty()
+            && c.len() <= 64
+            && c.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+    });
     let request = ResumePickerRequest {
         task_id,
         prompt,
         parent_session_id: session_id,
-        task_class: None,
+        task_class: resumed_task_class.as_deref(),
     };
     info!(
         task = %task_id,
         reason = %reason,
         attempt = attempt,
+        task_class = %resumed_task_class.as_deref().unwrap_or("<default>"),
         "dispatching resume-picker",
     );
     let subject = resolve_tool_subject(nats, SESSION_SERVICE, RESUME_PICKER_METHOD).await;
@@ -805,6 +824,77 @@ async fn count_recent_continuations(task_id: &str) -> u32 {
     u32::try_from(count).unwrap_or(u32::MAX)
 }
 
+/// Find the original `task_class` for this task by scanning recent
+/// `picker.spawned` events in `journal.picker.jsonl`. Walks today, then
+/// up to 6 days back (long-running tasks resumed after a multi-day gap
+/// are real — see t-260521-1yb18ckk resumed on 2026-05-23). Returns the
+/// task_class from the *earliest* picker.spawned found (the initial
+/// spawn carries the canonical task_class from the dispatcher; later
+/// resumes can themselves drop to defaults if this lookup ever misses).
+async fn lookup_recent_task_class(task_id: &str) -> Option<String> {
+    let journal_root = std::env::var_os("JAM_JOURNAL_ROOT").map_or_else(
+        || PathBuf::from("/home/maestro/.jam/journal"),
+        PathBuf::from,
+    );
+    lookup_recent_task_class_in(&journal_root, task_id, 6).await
+}
+
+async fn lookup_recent_task_class_in(
+    journal_root: &std::path::Path,
+    task_id: &str,
+    days_back: u32,
+) -> Option<String> {
+    let today = Utc::now().date_naive();
+    let task_needle = format!("\"task_id\":\"{task_id}\"");
+    let event_marker = "\"event_type\":\"picker.spawned\"";
+    let mut earliest: Option<(DateTime<Utc>, String)> = None;
+    for back in 0..=days_back {
+        let date = today - chrono::Duration::days(i64::from(back));
+        let path = journal_root
+            .join(date.format("%Y-%m-%d").to_string())
+            .join("journal.picker.jsonl");
+        let Ok(content) = tokio::fs::read_to_string(&path).await else {
+            continue;
+        };
+        for line in content.lines() {
+            if !line.contains(event_marker) || !line.contains(&task_needle) {
+                continue;
+            }
+            let Ok(envelope) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            let Some(payload_task_id) = envelope
+                .get("payload")
+                .and_then(|p| p.get("task_id"))
+                .and_then(|v| v.as_str())
+            else {
+                continue;
+            };
+            if payload_task_id != task_id {
+                continue;
+            }
+            let Some(class) = envelope
+                .get("payload")
+                .and_then(|p| p.get("task_class"))
+                .and_then(|v| v.as_str())
+            else {
+                continue;
+            };
+            let ts = envelope
+                .get("timestamp")
+                .and_then(|v| v.as_str())
+                .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(Utc::now);
+            match &earliest {
+                Some((existing_ts, _)) if *existing_ts <= ts => {}
+                _ => earliest = Some((ts, class.to_owned())),
+            }
+        }
+    }
+    earliest.map(|(_, class)| class)
+}
+
 fn draft_continuation_prompt(reason: &str, detail: &str, event: &ExitedEvent) -> String {
     let common = format!(
         "The post-picker coordinator could not open a PR for task `{}` because: {}.\n\n",
@@ -896,6 +986,54 @@ mod tests {
         let t = truncate("0123456789ABCDEF", 5);
         assert!(t.starts_with("01234"));
         assert!(t.contains("truncated"));
+    }
+
+    fn write_journal_line(
+        path: &std::path::Path,
+        timestamp: &str,
+        task_id: &str,
+        task_class: &str,
+    ) {
+        use std::io::Write;
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(path)
+            .unwrap();
+        let line = format!(
+            "{{\"schema_version\":1,\"event_type\":\"picker.spawned\",\"event_subtype_version\":2,\"timestamp\":\"{timestamp}\",\"journal_seq\":0,\"trace_id\":\"01HXKJVF7P4N6X5R8SRZWB6JCM\",\"actor\":\"jam-svc-session\",\"payload\":{{\"task_id\":\"{task_id}\",\"task_class\":\"{task_class}\"}}}}\n"
+        );
+        f.write_all(line.as_bytes()).unwrap();
+    }
+
+    #[tokio::test]
+    async fn lookup_recent_task_class_finds_earliest_spawn() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let today = Utc::now().date_naive().format("%Y-%m-%d").to_string();
+        let path = tmp.path().join(&today).join("journal.picker.jsonl");
+        // Earlier spawn carries the original task_class; later resume
+        // accidentally drops to "light-edit". The lookup must pick the
+        // earlier one so the resume re-arms with the original class.
+        let earliest_ts = format!("{}T01:00:00Z", today);
+        let later_ts = format!("{}T02:00:00Z", today);
+        write_journal_line(&path, &earliest_ts, "task-1", "jamboree-self-modification");
+        write_journal_line(&path, &later_ts, "task-1", "light-edit");
+        // Other task on same day must not match.
+        write_journal_line(&path, &later_ts, "task-2", "compile-heavy-rust");
+        let found = lookup_recent_task_class_in(tmp.path(), "task-1", 1).await;
+        assert_eq!(found.as_deref(), Some("jamboree-self-modification"));
+    }
+
+    #[tokio::test]
+    async fn lookup_recent_task_class_returns_none_for_unknown_task() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let today = Utc::now().date_naive().format("%Y-%m-%d").to_string();
+        let path = tmp.path().join(&today).join("journal.picker.jsonl");
+        let ts = format!("{}T01:00:00Z", today);
+        write_journal_line(&path, &ts, "task-1", "jamboree-self-modification");
+        let found = lookup_recent_task_class_in(tmp.path(), "missing", 1).await;
+        assert!(found.is_none());
     }
 
     #[test]

@@ -14,6 +14,7 @@ path = "src/main.rs"
 
 [dependencies]
 chrono = { workspace = true }
+clap = { workspace = true }
 futures = { workspace = true }
 jam-events = { path = "../jam-events" }
 jam-nats = { path = "../jam-nats" }

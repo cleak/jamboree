@@ -130,13 +130,20 @@ enum Command {
         /// Tool service names. Each must match a `jam-svc-<service>` crate, or
         /// `maestro` for the Python orchestrator app. Multiple names deploy in
         /// the given order. With `--dirty` and no names, services are inferred
-        /// from `git status` (paths under `crates/jam-svc-*/` and `maestro/`).
+        /// from `git status` (paths under `crates/jam-svc-*/`, `ui/`, `maestro/`).
         #[arg(num_args = 0..)]
         services: Vec<String>,
         /// Deploy every component whose source has uncommitted changes in the
         /// working tree. Mutually exclusive with explicit service names.
-        #[arg(long, conflicts_with_all = ["version", "from"])]
+        #[arg(long, conflicts_with_all = ["version", "from", "since"])]
         dirty: bool,
+        /// Deploy every component whose source changed between `<ref>..HEAD`.
+        /// Used by the caleb-side auto-deploy driver to redeploy services
+        /// affected by commits landed since the last successful deploy.
+        /// Mutually exclusive with explicit service names, `--dirty`,
+        /// `--version`, and `--from`.
+        #[arg(long, value_name = "REF", conflicts_with_all = ["version", "from", "dirty"])]
+        since: Option<String>,
         /// Version override. Defaults to workspace version, with `-<short-sha>-dirty`
         /// suffix when the working tree has uncommitted changes. Single-service only;
         /// not supported for `maestro`.
@@ -383,10 +390,11 @@ fn main() -> ExitCode {
         Command::Deploy {
             services,
             dirty,
+            since,
             version,
             from,
             nats_url,
-        } => run_deploy(services, dirty, version, from, nats_url),
+        } => run_deploy(services, dirty, since, version, from, nats_url),
     }
 }
 
@@ -3544,11 +3552,12 @@ fn current_user() -> String {
 fn run_deploy(
     services: Vec<String>,
     dirty: bool,
+    since: Option<String>,
     version: Option<String>,
     from: Option<PathBuf>,
     nats_url: Option<String>,
 ) -> ExitCode {
-    let resolved = match resolve_deploy_targets(services, dirty) {
+    let resolved = match resolve_deploy_targets(services, dirty, since.as_deref()) {
         Ok(value) => value,
         Err(err) => {
             eprintln!("jam deploy failed: {err}");
@@ -3617,7 +3626,11 @@ fn run_deploy(
     }
 }
 
-fn resolve_deploy_targets(services: Vec<String>, dirty: bool) -> Result<Vec<String>, String> {
+fn resolve_deploy_targets(
+    services: Vec<String>,
+    dirty: bool,
+    since: Option<&str>,
+) -> Result<Vec<String>, String> {
     if dirty {
         if !services.is_empty() {
             return Err("--dirty cannot be combined with explicit service names".into());
@@ -3625,20 +3638,30 @@ fn resolve_deploy_targets(services: Vec<String>, dirty: bool) -> Result<Vec<Stri
         let workspace_root = resolve_workspace_root()?;
         return discover_dirty_targets(&workspace_root);
     }
+    if let Some(since_ref) = since {
+        if !services.is_empty() {
+            return Err("--since cannot be combined with explicit service names".into());
+        }
+        let trimmed = since_ref.trim();
+        if trimmed.is_empty() {
+            return Err("--since requires a non-empty git ref".into());
+        }
+        let workspace_root = resolve_workspace_root()?;
+        return discover_since_targets(&workspace_root, trimmed);
+    }
     if services.is_empty() {
         return Err(
-            "specify one or more service names, or pass --dirty to infer from `git status`".into(),
+            "specify one or more service names, pass --dirty to infer from `git status`, \
+             or --since <ref> to infer from the diff against <ref>"
+                .into(),
         );
     }
     Ok(services)
 }
 
 /// Inspect `git status --porcelain` and return the deploy targets whose source
-/// paths have uncommitted changes. Recognized prefixes:
-/// - `crates/jam-svc-<name>/` → `<name>`
-/// - `maestro/`               → `maestro`
-/// Targets are returned in a stable order: rust services alphabetically, then
-/// `maestro` last (the maestro restart is the most observable change).
+/// paths have uncommitted changes. See [`targets_for_changed_paths`] for the
+/// path→service rules.
 fn discover_dirty_targets(workspace_root: &Path) -> Result<Vec<String>, String> {
     let output = ProcessCommand::new("git")
         .args(["status", "--porcelain", "-z"])
@@ -3654,28 +3677,86 @@ fn discover_dirty_targets(workspace_root: &Path) -> Result<Vec<String>, String> 
     let raw = String::from_utf8(output.stdout)
         .map_err(|err| format!("git status returned invalid utf-8: {err}"))?;
 
-    // Index every registered deploy target by its `crates/<crate_name>/` prefix
-    // so the matcher is data-driven: adding a new target to the registry makes
-    // `--dirty` pick it up automatically. BTreeMap ordering is stable but not
-    // semantically meaningful; we re-sort at the end.
+    let paths: Vec<&str> = raw
+        .split('\0')
+        .filter_map(|entry| {
+            // Porcelain format: "XY <path>" — XY is 2 status chars + space.
+            // Use `then` (lazy) not `then_some` (eager) — the latter would
+            // evaluate `&entry[3..]` even when the length check fails and
+            // panic on the trailing empty entry from `git status -z`.
+            (entry.len() >= 4).then(|| &entry[3..])
+        })
+        .collect();
+    Ok(targets_for_changed_paths(&paths))
+}
+
+/// Run `git diff --name-only <since>..HEAD` in the workspace and return the
+/// deploy targets affected by the diff. Used by the auto-deploy driver to
+/// translate "everything that landed since the last deploy" into a deploy list.
+///
+/// `since` is any git ref the workspace can resolve — typically the sha
+/// recorded in `~/.jam/last-auto-deploy.sha` from the previous tick.
+fn discover_since_targets(workspace_root: &Path, since: &str) -> Result<Vec<String>, String> {
+    let output = ProcessCommand::new("git")
+        .args(["diff", "--name-only", &format!("{since}..HEAD")])
+        .current_dir(workspace_root)
+        .output()
+        .map_err(|err| format!("run git diff: {err}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git diff --name-only {since}..HEAD failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let raw = String::from_utf8(output.stdout)
+        .map_err(|err| format!("git diff returned invalid utf-8: {err}"))?;
+    let paths: Vec<&str> = raw.lines().collect();
+    Ok(targets_for_changed_paths(&paths))
+}
+
+/// Map a list of changed source paths to the deploy targets that should be
+/// re-built. The mapping is data-driven for cargo crates (every registered
+/// `DeployTarget` contributes `crates/<crate_name>/` as a prefix) plus a small
+/// set of project-shape-specific extras:
+///
+/// - `crates/jam-svc-<name>/` and other registered crates → matching short_name
+/// - `maestro/{src/,pyproject.toml,uv.lock}` → `maestro` (test-only edits skipped)
+/// - `ui/` → `ui-server` (the UI bundle lives outside the cargo workspace; the
+///   `jam-ui-server` deploy ships both the binary and the rebuilt `ui/dist`)
+///
+/// Targets come back deduplicated and stably ordered (rust services
+/// alphabetically by short_name, then `maestro` and `ui-server` last because
+/// those are the most observable restarts).
+fn targets_for_changed_paths<S: AsRef<str>>(paths: &[S]) -> Vec<String> {
     let prefix_to_short: std::collections::BTreeMap<String, &'static str> =
         jam_tools_core::deploy_targets::DEPLOY_TARGETS
             .iter()
             .map(|t| (format!("crates/{}/", t.crate_name), t.short_name))
             .collect();
 
+    // Use a set for the rust services (so cargo-prefixed paths dedupe cleanly
+    // against each other) and track maestro/ui-server separately so we can
+    // pin them at the tail of the result. ui-server short_name *is* a real
+    // service entry too — promotion to the tail happens at the end so the
+    // final list still dedupes.
     let mut services = std::collections::BTreeSet::new();
     let mut include_maestro = false;
-    for entry in raw.split('\0') {
-        if entry.len() < 4 {
+    let mut include_ui_server = false;
+    for raw_path in paths {
+        let path = raw_path.as_ref().trim();
+        if path.is_empty() {
             continue;
         }
-        // Porcelain format: "XY <path>" — XY is 2 status chars + space.
-        let path = &entry[3..];
         let mut matched = false;
         for (prefix, short_name) in &prefix_to_short {
             if path.starts_with(prefix.as_str()) {
-                services.insert((*short_name).to_owned());
+                if *short_name == "ui-server" {
+                    include_ui_server = true;
+                } else if *short_name == "maestro" {
+                    include_maestro = true;
+                } else {
+                    services.insert((*short_name).to_owned());
+                }
                 matched = true;
                 break;
             }
@@ -3683,21 +3764,32 @@ fn discover_dirty_targets(workspace_root: &Path) -> Result<Vec<String>, String> 
         if matched {
             continue;
         }
-        if path.starts_with("maestro/") {
-            // Only treat as deploy-affecting if it's under src/, pyproject.toml,
-            // or uv.lock — test changes alone don't need a redeploy.
-            let rest = &path["maestro/".len()..];
+        if let Some(rest) = path.strip_prefix("maestro/") {
+            // Test-only edits don't need a redeploy.
             if rest.starts_with("src/") || rest == "pyproject.toml" || rest == "uv.lock" {
                 include_maestro = true;
             }
+            continue;
+        }
+        if let Some(rest) = path.strip_prefix("ui/") {
+            // ui/ holds the SolidJS source for the dashboard bundle shipped
+            // by `jam deploy ui-server`. node_modules/ is checked out at
+            // build time and never committed; skip belt-and-braces.
+            if !rest.starts_with("node_modules/") {
+                include_ui_server = true;
+            }
+            continue;
         }
     }
 
     let mut targets: Vec<String> = services.into_iter().collect();
+    if include_ui_server {
+        targets.push("ui-server".to_owned());
+    }
     if include_maestro {
         targets.push("maestro".to_owned());
     }
-    Ok(targets)
+    targets
 }
 
 fn run_deploy_inner(
@@ -4119,21 +4211,82 @@ mod tests {
 
     #[test]
     fn resolve_deploy_targets_rejects_dirty_with_explicit_names() {
-        let err = resolve_deploy_targets(vec!["worktree".into()], true).unwrap_err();
+        let err = resolve_deploy_targets(vec!["worktree".into()], true, None).unwrap_err();
         assert!(err.contains("--dirty cannot be combined"));
     }
 
     #[test]
     fn resolve_deploy_targets_rejects_empty_without_dirty() {
-        let err = resolve_deploy_targets(vec![], false).unwrap_err();
+        let err = resolve_deploy_targets(vec![], false, None).unwrap_err();
         assert!(err.contains("specify one or more service names"));
     }
 
     #[test]
     fn resolve_deploy_targets_passes_explicit_services_through() {
         let targets =
-            resolve_deploy_targets(vec!["worktree".into(), "maestro".into()], false).unwrap();
+            resolve_deploy_targets(vec!["worktree".into(), "maestro".into()], false, None).unwrap();
         assert_eq!(targets, vec!["worktree", "maestro"]);
+    }
+
+    #[test]
+    fn resolve_deploy_targets_rejects_since_with_explicit_names() {
+        let err =
+            resolve_deploy_targets(vec!["worktree".into()], false, Some("HEAD~1")).unwrap_err();
+        assert!(err.contains("--since cannot be combined"));
+    }
+
+    #[test]
+    fn resolve_deploy_targets_rejects_empty_since() {
+        let err = resolve_deploy_targets(vec![], false, Some("   ")).unwrap_err();
+        assert!(err.contains("--since requires a non-empty git ref"));
+    }
+
+    #[test]
+    fn targets_for_changed_paths_maps_crates_ui_and_maestro() {
+        let paths = vec![
+            "crates/jam-svc-worktree/src/main.rs",
+            "crates/jam-svc-session/src/lib.rs",
+            "ui/src/index.css",
+            "ui/src/main.tsx",
+            "maestro/src/jam_maestro/dispatch.py",
+            "docs/proposal-v5.md",
+            "README.md",
+        ];
+        let targets = targets_for_changed_paths(&paths);
+        // rust services alphabetically by short_name, then ui-server, then maestro
+        assert_eq!(targets, vec!["session", "worktree", "ui-server", "maestro"]);
+    }
+
+    #[test]
+    fn targets_for_changed_paths_ignores_ui_node_modules() {
+        let paths = vec!["ui/node_modules/vite/dist/foo.js"];
+        let targets = targets_for_changed_paths(&paths);
+        assert!(targets.is_empty(), "got {targets:?}");
+    }
+
+    #[test]
+    fn targets_for_changed_paths_dedupes_ui_via_crate_and_ui_dir() {
+        // crates/jam-ui-server/src/main.rs *and* ui/src/main.tsx both touched
+        // — must yield exactly one ui-server entry.
+        let paths = vec!["crates/jam-ui-server/src/main.rs", "ui/src/main.tsx"];
+        let targets = targets_for_changed_paths(&paths);
+        assert_eq!(targets, vec!["ui-server"]);
+    }
+
+    #[test]
+    fn targets_for_changed_paths_empty_for_irrelevant_paths() {
+        let paths = vec![
+            "docs/proposal-v5.md",
+            "README.md",
+            ".github/workflows/ci.yml",
+        ];
+        assert!(targets_for_changed_paths(&paths).is_empty());
+    }
+
+    #[test]
+    fn targets_for_changed_paths_ignores_maestro_test_only_changes() {
+        let paths = vec!["maestro/tests/unit/test_dispatch.py", "maestro/README.md"];
+        assert!(targets_for_changed_paths(&paths).is_empty());
     }
 
     #[test]

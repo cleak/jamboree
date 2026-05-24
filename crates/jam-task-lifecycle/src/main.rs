@@ -13,6 +13,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use chrono::{DateTime, Utc};
+use clap::Parser;
 use futures::StreamExt;
 use jam_events::generated::{Event, TempyrTaskUpdated};
 use jam_events::EventEnvelope;
@@ -25,6 +26,19 @@ use tracing::{debug, error, info, warn};
 
 const SERVICE_NAME: &str = "jam-task-lifecycle";
 const SERVICE_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Reconcile Tempyr task nodes from Picker/PR journal events and run the
+/// post-picker open-pr/continuation handshake.
+///
+/// The daemon takes no flags — it reads NATS/journal config from env. Args
+/// are parsed via clap so an accidental `--help` invocation prints help and
+/// exits instead of silently joining the `journal.>` subscriber pool, which
+/// would duplicate every continuation. (Observed on 2026-05-21 / 2026-05-23
+/// where a stray `jam-task-lifecycle --help` ran for days, producing twin
+/// `picker.continuation-needed` events with the same trace_id.)
+#[derive(Debug, Parser)]
+#[command(name = SERVICE_NAME, version, about, long_about = None)]
+struct Cli {}
 const DEFAULT_CANONICAL_WORKTREE: &str = "/home/caleb/blueberry-jam";
 const DEFAULT_GRAPH_RELPATH: &str = "graph";
 const TASK_ID_MAX_LEN: usize = 128;
@@ -119,6 +133,9 @@ struct UpdateResult {
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
+    // Parse first so `--help` / `--version` / unknown flags exit cleanly
+    // instead of dropping into the NATS subscriber loop. See Cli docstring.
+    let _ = Cli::parse();
     if let Err(err) = run().await {
         error!("jam-task-lifecycle fatal: {err}");
         return std::process::ExitCode::FAILURE;
@@ -298,9 +315,28 @@ enum Transition {
 
 impl Transition {
     fn apply(&self, node: &mut TaskNode, envelope: &JournalEnvelope) {
+        // Tasks that already reached a terminal `merged` (or `abandoned` /
+        // `failed`) status must not be silently demoted back to `in-progress`
+        // or `in-review` by a late event. The concrete case this guards
+        // against: t-260521-1yb18ckk merged via PR #24 on 2026-05-21, then
+        // someone hit "resume" in the UI two days later → picker.spawned
+        // demoted status to in-progress → picker.exited → pr.opened (empty
+        // PR #25) → in-review. The task got stuck "in-review" with a phantom
+        // PR that CodeRabbit couldn't review. PickerExited already had this
+        // guard for in-review/merged; PickerSpawned and PrOpened did not.
+        let current_status = node.string("status");
+        let is_terminal = matches!(
+            current_status.as_deref(),
+            Some("merged" | "abandoned" | "failed")
+        );
         match self {
             Self::PickerSpawned => {
-                node.set_str("status", "in-progress");
+                if !is_terminal {
+                    node.set_str("status", "in-progress");
+                }
+                // Keep recording session metadata regardless — even on a
+                // terminal task the spawn happened, so telemetry should
+                // reflect the latest worktree/session for debugging.
                 copy_string(node, &envelope.payload, "spawned_at", "spawned-at");
                 copy_string(node, &envelope.payload, "session_id", "session-id");
                 copy_string(node, &envelope.payload, "session_id", "picker-handle");
@@ -324,8 +360,10 @@ impl Transition {
                 copy_string(node, &envelope.payload, "exited_at", "exited-at");
                 copy_string(node, &envelope.payload, "duration_ms", "duration-ms");
 
-                let status = node.string("status");
-                if !matches!(status.as_deref(), Some("in-review" | "merged")) {
+                if !matches!(
+                    current_status.as_deref(),
+                    Some("in-review" | "merged" | "abandoned" | "failed")
+                ) {
                     let exit_code = envelope
                         .payload
                         .get("exit_code")
@@ -340,7 +378,9 @@ impl Transition {
                 }
             }
             Self::PrOpened => {
-                node.set_str("status", "in-review");
+                if !is_terminal {
+                    node.set_str("status", "in-review");
+                }
                 copy_string(node, &envelope.payload, "pr_ref", "pr-ref");
                 copy_string(node, &envelope.payload, "branch", "pr-branch");
                 copy_string(node, &envelope.payload, "title", "pr-title");
@@ -357,23 +397,27 @@ impl Transition {
                 copy_string(node, &envelope.payload, "touched_paths", "touched-paths");
             }
             Self::TaskFailed => {
-                node.set_str("status", "failed");
-                copy_string(node, &envelope.payload, "reason", "outcome");
-                copy_string(node, &envelope.payload, "reason", "failure-reason");
-                copy_string(node, &envelope.payload, "detail", "failure-detail");
-                copy_string(node, &envelope.payload, "failed_at", "failed-at");
-                copy_string(
-                    node,
-                    &envelope.payload,
-                    "source_event_type",
-                    "failure-source",
-                );
+                if current_status.as_deref() != Some("merged") {
+                    node.set_str("status", "failed");
+                    copy_string(node, &envelope.payload, "reason", "outcome");
+                    copy_string(node, &envelope.payload, "reason", "failure-reason");
+                    copy_string(node, &envelope.payload, "detail", "failure-detail");
+                    copy_string(node, &envelope.payload, "failed_at", "failed-at");
+                    copy_string(
+                        node,
+                        &envelope.payload,
+                        "source_event_type",
+                        "failure-source",
+                    );
+                }
             }
             Self::TaskAbandoned => {
-                node.set_str("status", "abandoned");
-                copy_string(node, &envelope.payload, "reason", "outcome");
-                copy_string(node, &envelope.payload, "reason", "abandoned-reason");
-                copy_string(node, &envelope.payload, "abandoned_at", "abandoned-at");
+                if current_status.as_deref() != Some("merged") {
+                    node.set_str("status", "abandoned");
+                    copy_string(node, &envelope.payload, "reason", "outcome");
+                    copy_string(node, &envelope.payload, "reason", "abandoned-reason");
+                    copy_string(node, &envelope.payload, "abandoned_at", "abandoned-at");
+                }
             }
         }
     }
@@ -773,6 +817,142 @@ mod tests {
 
         assert!(raw.contains("status: in-review"));
         assert!(raw.contains("exit-code: '0'"));
+    }
+
+    #[test]
+    fn merged_task_does_not_demote_on_late_picker_spawn() {
+        // Reproduces t-260521-1yb18ckk: task merged via PR #24 on May 21,
+        // someone hits "resume" in the UI two days later → picker.spawned
+        // arrives. Before the guard, the merged status flipped to in-progress.
+        let tmp = TempDir::new().unwrap();
+        let config = test_config(tmp.path());
+        apply_lifecycle_event(
+            &config,
+            &envelope(
+                "pr.merged",
+                serde_json::json!({
+                    "task_id": "task-1",
+                    "pr_ref": "cleak/blueberry#42",
+                    "merged_sha": "abc123",
+                    "merged_by": "caleb",
+                    "merged_at": "2026-05-21T05:32:25Z"
+                }),
+            ),
+        )
+        .unwrap();
+
+        let result = apply_lifecycle_event(
+            &config,
+            &envelope(
+                "picker.spawned",
+                serde_json::json!({
+                    "task_id": "task-1",
+                    "session_id": "codex-cli:late-resume",
+                    "harness": "codex-cli",
+                    "worktree_path": "/tmp/worktrees/task-1",
+                    "spawned_at": "2026-05-23T05:11:13Z",
+                    "picker_trace_id": "01KS9KX7H3DD8ERSCCJ1M0Y5ZJ",
+                    "maestro_trace_id": "01KS9KX7H3KEJ2Q5PYJ7S6S3KK"
+                }),
+            ),
+        )
+        .unwrap()
+        .unwrap();
+        let raw = fs::read_to_string(result.task_path).unwrap();
+
+        assert!(raw.contains("status: merged"), "{raw}");
+        // Metadata still recorded for telemetry / debug.
+        assert!(raw.contains("session-id: codex-cli:late-resume"));
+        assert!(raw.contains("merged-sha: abc123"));
+    }
+
+    #[test]
+    fn merged_task_does_not_demote_on_late_task_failed() {
+        // Continuation cap on a stale review-received was demoting merged
+        // tasks to failed. Concrete repro: PR #25 close triggered a
+        // github review-received → continuation cap → task.failed →
+        // merged became failed. Guard rejects the transition.
+        let tmp = TempDir::new().unwrap();
+        let config = test_config(tmp.path());
+        apply_lifecycle_event(
+            &config,
+            &envelope(
+                "pr.merged",
+                serde_json::json!({
+                    "task_id": "task-1",
+                    "pr_ref": "cleak/blueberry#42",
+                    "merged_sha": "abc123",
+                    "merged_by": "caleb",
+                    "merged_at": "2026-05-21T05:32:25Z"
+                }),
+            ),
+        )
+        .unwrap();
+
+        let result = apply_lifecycle_event(
+            &config,
+            &envelope(
+                "task.failed",
+                serde_json::json!({
+                    "task_id": "task-1",
+                    "reason": "continuation-cap-review-received",
+                    "detail": "Post-picker continuation hit attempt cap",
+                    "failed_at": "2026-05-23T06:36:08Z",
+                    "source_event_type": "picker.continuation-needed"
+                }),
+            ),
+        )
+        .unwrap()
+        .unwrap();
+        let raw = fs::read_to_string(result.task_path).unwrap();
+
+        assert!(raw.contains("status: merged"), "{raw}");
+    }
+
+    #[test]
+    fn merged_task_does_not_demote_on_late_pr_opened() {
+        // Same scenario as above but the demoting event is the idempotent
+        // pr.opened that fires when an empty PR (#25 in the bug) is "opened"
+        // for the already-merged branch.
+        let tmp = TempDir::new().unwrap();
+        let config = test_config(tmp.path());
+        apply_lifecycle_event(
+            &config,
+            &envelope(
+                "pr.merged",
+                serde_json::json!({
+                    "task_id": "task-1",
+                    "pr_ref": "cleak/jamboree#24",
+                    "merged_sha": "abc123",
+                    "merged_by": "cleak",
+                    "merged_at": "2026-05-21T05:32:25Z"
+                }),
+            ),
+        )
+        .unwrap();
+
+        let result = apply_lifecycle_event(
+            &config,
+            &envelope(
+                "pr.opened",
+                serde_json::json!({
+                    "task_id": "task-1",
+                    "pr_ref": "cleak/jamboree#25",
+                    "branch": "task/task-1",
+                    "title": "[jam] phantom PR",
+                    "draft": false,
+                    "opened_at": "2026-05-23T05:11:51Z"
+                }),
+            ),
+        )
+        .unwrap()
+        .unwrap();
+        let raw = fs::read_to_string(result.task_path).unwrap();
+
+        assert!(raw.contains("status: merged"), "{raw}");
+        // pr-ref still updated so the dashboard can show the phantom PR for
+        // triage even though status stays merged.
+        assert!(raw.contains("pr-ref: cleak/jamboree#25"));
     }
 
     #[test]

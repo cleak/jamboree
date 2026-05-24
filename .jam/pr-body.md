@@ -1,7 +1,7 @@
 ## Summary
 
-- Adds shared themed styling for editable UI controls so text fields, textareas, and dropdowns read as intentional input surfaces in light and dark mode.
-- Strengthens control borders, inset definition, shadows, focus rings, placeholder color, disabled states, and select dropdown affordances without changing task target behavior.
+- Gives shared editable controls a subtle tinted background in light and dark mode so text fields, textareas, and dropdowns stand out before focus.
+- Ensures the shared editable-control background wins over existing `bg-white` utility classes without changing task target behavior.
 
 ## Verification
 
@@ -11,4 +11,4 @@
 
 ## Notes
 
-- Recorded the shared-control-styling decision in Tempyr journal entry `j-5ec6b50f2bc5495da5d5c7723788604d`.
+- Recorded the shared-control-styling decision in Tempyr journal entry `j-6c160ebb3bf144368a3d27420ff82c2c`.

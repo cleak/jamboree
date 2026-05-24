@@ -126,7 +126,12 @@ struct ResumePickerResponse {
 /// Handle a `pr.review-received` event: emit `picker.continuation-needed`
 /// so the Picker addresses the new review activity in its worktree. The
 /// follow-up commits flow back to the same PR branch.
-pub async fn handle_pr_review_received(nats: &JamNats, envelope: &JournalEnvelope, ctx: &TraceCtx) {
+pub async fn handle_pr_review_received(
+    nats: &JamNats,
+    envelope: &JournalEnvelope,
+    ctx: &TraceCtx,
+    store: &std::sync::Arc<std::sync::Mutex<jam_task_store::TaskStore>>,
+) {
     let task_id = envelope
         .payload
         .get("task_id")
@@ -157,7 +162,16 @@ pub async fn handle_pr_review_received(nats: &JamNats, envelope: &JournalEnvelop
          \n\
          Make follow-up commits on the existing branch (do NOT amend or force-push). When your worktree is clean and `.jam/pr-*` reflects the cumulative change, exit.",
     );
-    publish_continuation(nats, &event, "review-received", &detail, &prompt, ctx).await;
+    publish_continuation(
+        nats,
+        &event,
+        "review-received",
+        &detail,
+        &prompt,
+        ctx,
+        store,
+    )
+    .await;
 }
 
 /// Handle a `pr.ci.status-changed` event for a failing CI run: emit
@@ -166,6 +180,7 @@ pub async fn handle_pr_ci_status_changed(
     nats: &JamNats,
     envelope: &JournalEnvelope,
     ctx: &TraceCtx,
+    store: &std::sync::Arc<std::sync::Mutex<jam_task_store::TaskStore>>,
 ) {
     let task_id = envelope
         .payload
@@ -197,7 +212,7 @@ pub async fn handle_pr_ci_status_changed(
          \n\
          When the local build/test gates pass again and the worktree is clean, exit. The orchestrator will push your follow-up commits to the existing PR.",
     );
-    publish_continuation(nats, &event, "ci-failed", &detail, &prompt, ctx).await;
+    publish_continuation(nats, &event, "ci-failed", &detail, &prompt, ctx, store).await;
 }
 
 fn ci_status_is_failure(status: &str) -> bool {
@@ -225,12 +240,13 @@ fn synth_exited_event(task_id: &str) -> ExitedEvent {
 
 /// Handle a `picker.continuation-needed` event by calling
 /// `tool.session.resume-picker`. Guards against runaway continuation loops
-/// by capping `attempt` at [`CONTINUATION_ATTEMPT_CAP`]; beyond the cap the
-/// event is left in the journal for human triage.
+/// using the task aggregate's continuation cap (from the event store). If the
+/// store isn't available, falls back to the `attempt` field in the event payload.
 pub async fn handle_continuation_needed(
     nats: &JamNats,
     envelope: &JournalEnvelope,
     ctx: &TraceCtx,
+    store: &std::sync::Arc<std::sync::Mutex<jam_task_store::TaskStore>>,
 ) {
     let task_id = envelope
         .payload
@@ -255,7 +271,7 @@ pub async fn handle_continuation_needed(
     let attempt = envelope
         .payload
         .get("attempt")
-        .and_then(|v| v.as_u64())
+        .and_then(serde_json::Value::as_u64)
         .unwrap_or(0) as u32;
 
     if task_id.is_empty() || session_id.is_empty() || prompt.is_empty() {
@@ -263,7 +279,16 @@ pub async fn handle_continuation_needed(
         return;
     }
 
-    if attempt >= CONTINUATION_ATTEMPT_CAP {
+    // Use the event store's aggregate for the continuation cap check.
+    // The aggregate tracks pre-PR and post-PR continuations independently,
+    // which is more robust than scanning journal files.
+    let can_continue = store
+        .lock()
+        .ok()
+        .and_then(|s| s.load(task_id).ok().flatten())
+        .map_or(attempt < CONTINUATION_ATTEMPT_CAP, |agg| agg.can_continue());
+
+    if !can_continue {
         warn!(
             task = %task_id,
             reason = %reason,
@@ -363,7 +388,12 @@ pub async fn handle_continuation_needed(
 }
 
 /// Entry point invoked from `handle_message` after the Tempyr-node update.
-pub async fn handle_picker_exited(nats: &JamNats, envelope: &JournalEnvelope, ctx: &TraceCtx) {
+pub async fn handle_picker_exited(
+    nats: &JamNats,
+    envelope: &JournalEnvelope,
+    ctx: &TraceCtx,
+    store: &std::sync::Arc<std::sync::Mutex<jam_task_store::TaskStore>>,
+) {
     if envelope.event_type != "picker.exited" {
         return;
     }
@@ -410,6 +440,7 @@ pub async fn handle_picker_exited(nats: &JamNats, envelope: &JournalEnvelope, ct
                             &err,
                             &draft_open_pr_failure_prompt(&event, &err),
                             ctx,
+                            store,
                         )
                         .await;
                     }
@@ -423,7 +454,7 @@ pub async fn handle_picker_exited(nats: &JamNats, envelope: &JournalEnvelope, ct
                 reason = %reason,
                 "post-picker pre-checks failed; requesting continuation",
             );
-            publish_continuation(nats, &event, reason, &detail, &prompt, ctx).await;
+            publish_continuation(nats, &event, reason, &detail, &prompt, ctx, store).await;
         }
     }
 }
@@ -742,12 +773,18 @@ async fn publish_continuation(
     detail: &str,
     prompt: &str,
     ctx: &TraceCtx,
+    store: &std::sync::Arc<std::sync::Mutex<jam_task_store::TaskStore>>,
 ) {
-    // Count prior continuations for this task so handle_continuation_needed's
-    // attempt cap fires. Previous behaviour hardcoded attempt=0 and the loop
-    // ran forever for tasks whose pre-checks always failed (e.g. jamboree
-    // self-modify without a github origin → "no-commits" every time).
-    let prior_attempts = count_recent_continuations(&event.task_id).await;
+    // Get the continuation count from the event store's aggregate.
+    // This is authoritative — replaces the old journal-file scanning approach.
+    // Falls back to scanning the journal on store failure (defense in depth).
+    let prior_attempts = store
+        .lock()
+        .ok()
+        .and_then(|s| s.load(&event.task_id).ok().flatten()).map_or_else(|| {
+            warn!(task = %event.task_id, "event store unavailable for continuation count; falling back to journal scan");
+            futures::executor::block_on(count_recent_continuations(&event.task_id))
+        }, |agg| agg.total_continuations());
     let payload = PickerContinuationNeeded {
         task_id: event.task_id.clone(),
         session_id: event.session_id.clone(),
@@ -856,7 +893,7 @@ async fn count_recent_continuations(task_id: &str) -> u32 {
                         .as_str()
                         .map(ToOwned::to_owned)
                 })
-                .last()
+                .next_back()
         });
 
     let continuation_marker = "\"event_type\":\"picker.continuation-needed\"";
@@ -943,8 +980,7 @@ async fn lookup_recent_task_class_in(
                 .get("timestamp")
                 .and_then(|v| v.as_str())
                 .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-                .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(Utc::now);
+                .map_or_else(Utc::now, |dt| dt.with_timezone(&Utc));
             match &earliest {
                 Some((existing_ts, _)) if *existing_ts <= ts => {}
                 _ => earliest = Some((ts, class.to_owned())),

@@ -1,1 +1,1 @@
-Show live counts in the UI sidebar tabs
+feat(ui): show live counts in sidebar tabs

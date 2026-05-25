@@ -919,7 +919,7 @@ async fn launch_picker(
     };
 
     publish_picker_spawned(nats, &handle, &picker_trace, ctx).await?;
-    watch_picker_output(
+    let quota_exhausted_flag = watch_picker_output(
         nats.clone(),
         handle.clone(),
         picker_trace.clone(),
@@ -957,6 +957,7 @@ async fn launch_picker(
         handle.clone(),
         picker_trace,
         ctx.clone(),
+        quota_exhausted_flag,
     );
 
     Ok(handle)
@@ -2746,15 +2747,11 @@ const RATE_LIMIT_PATTERNS: &[&str] = &[
     "you've reached your limit",
     "you have reached your limit",
     "quota exceeded",
-    "throttled",
-    "429",
-    "overloaded",
-    "capacity",
-    "try again later",
     "request limit reached",
     "limit reached",
 ];
 
+#[cfg(test)]
 fn detect_quota_exhaustion_in_log(log_path: &Path, harness: &str) -> bool {
     let Ok(raw) = fs::read_to_string(log_path) else {
         return false;
@@ -2981,9 +2978,10 @@ fn watch_picker_output(
     stdout: Option<ChildStdout>,
     stderr: Option<ChildStderr>,
     output_log: Arc<Mutex<tokio::fs::File>>,
-) {
+) -> Arc<AtomicBool> {
     let sequence = Arc::new(AtomicU64::new(0));
     let first_output = Arc::new(AtomicBool::new(false));
+    let quota_exhausted_flag = Arc::new(AtomicBool::new(false));
     let usage_stdout_path =
         direct_stdout_log_path_for_harness(&handle.harness, Path::new(&handle.worktree_path))
             .filter(|_| !handle.dry_run);
@@ -3000,6 +2998,7 @@ fn watch_picker_output(
             output_log.clone(),
             sequence.clone(),
             first_output.clone(),
+            quota_exhausted_flag.clone(),
         );
     }
     if let Some(stderr) = stderr {
@@ -3014,8 +3013,10 @@ fn watch_picker_output(
             output_log,
             sequence,
             first_output,
+            quota_exhausted_flag.clone(),
         );
     }
+    quota_exhausted_flag
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3030,6 +3031,7 @@ fn spawn_picker_output_reader<R>(
     output_log: Arc<Mutex<tokio::fs::File>>,
     sequence: Arc<AtomicU64>,
     first_output: Arc<AtomicBool>,
+    quota_exhausted_flag: Arc<AtomicBool>,
 ) where
     R: AsyncRead + Unpin + Send + 'static,
 {
@@ -3114,6 +3116,20 @@ fn spawn_picker_output_reader<R>(
                 sequence: sequence.fetch_add(1, Ordering::SeqCst),
                 truncated,
             };
+            if stream == "stderr" && !quota_exhausted_flag.load(Ordering::Relaxed) {
+                let lower = record.line.to_ascii_lowercase();
+                if RATE_LIMIT_PATTERNS
+                    .iter()
+                    .any(|pattern| lower.contains(pattern))
+                {
+                    info!(
+                        session_id = %handle.session_id,
+                        line = %record.line,
+                        "detected rate-limit signal in Picker stderr"
+                    );
+                    quota_exhausted_flag.store(true, Ordering::SeqCst);
+                }
+            }
             append_picker_output_log(&output_log, &record).await;
             publish_picker_output(&nats, &record, &picker_trace).await;
         }
@@ -3189,6 +3205,7 @@ fn watch_picker_exit(
     handle: PickerHandle,
     picker_trace: TraceCtx,
     parent_trace: TraceCtx,
+    quota_exhausted_flag: Arc<AtomicBool>,
 ) {
     let session_id = handle.session_id.clone();
     tokio::spawn(async move {
@@ -3237,24 +3254,22 @@ fn watch_picker_exit(
                         &parent_trace,
                     )
                     .await;
-                    if exit_code.is_some_and(|c| c != 0) {
-                        let log_path =
-                            picker_output_log_path(&config.session_log_root, &handle.session_id);
-                        if detect_quota_exhaustion_in_log(&log_path, &handle.harness) {
-                            if let Err(err) = publish_quota_exhausted(
-                                &nats,
-                                &handle,
-                                exited_at,
-                                &picker_trace,
-                                &parent_trace,
-                            )
-                            .await
-                            {
-                                warn!(
-                                    session_id = %handle.session_id,
-                                    "failed to publish quota.exhausted: {err}"
-                                );
-                            }
+                    if exit_code.is_some_and(|c| c != 0)
+                        && quota_exhausted_flag.load(Ordering::SeqCst)
+                    {
+                        if let Err(err) = publish_quota_exhausted(
+                            &nats,
+                            &handle,
+                            exited_at,
+                            &picker_trace,
+                            &parent_trace,
+                        )
+                        .await
+                        {
+                            warn!(
+                                session_id = %handle.session_id,
+                                "failed to publish quota.exhausted: {err}"
+                            );
                         }
                     }
                     if exit_code == Some(0) {

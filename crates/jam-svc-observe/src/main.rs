@@ -2376,7 +2376,8 @@ fn api_budget_status(
 
 fn quota_status_rank(status: &str) -> u8 {
     match status {
-        "exhausted" => 3,
+        "exhausted" => 4,
+        "exhausted-soon" => 3,
         "low" => 2,
         "available" => 1,
         _ => 0,

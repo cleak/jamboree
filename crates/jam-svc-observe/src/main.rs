@@ -322,6 +322,8 @@ struct HarnessQuotaState {
     api_budget: Option<ApiBudgetState>,
     #[serde(skip_serializing_if = "Option::is_none")]
     usage: Option<QuotaUsageState>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sessions_in_window: Option<u32>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     price_events: Vec<PriceEventState>,
     observed_at: DateTime<Utc>,
@@ -1250,6 +1252,7 @@ struct QuotaFacts {
     available: bool,
     detail: String,
     states: HashMap<String, HarnessQuotaState>,
+    session_timestamps: HashMap<String, Vec<DateTime<Utc>>>,
 }
 
 struct TempyrFacts {
@@ -1676,6 +1679,8 @@ fn read_quota_states(config: &ObserveConfig, now: DateTime<Utc>) -> QuotaFacts {
         }
     }
 
+    derive_window_statuses(&mut facts, now);
+
     facts.detail = details.join("; ");
     facts
 }
@@ -1943,6 +1948,69 @@ fn apply_quota_config(
     Ok(())
 }
 
+/// For each configured window with `limit_in_window`, count sessions within
+/// the rolling window and derive a proactive status. Takes the WORSE of the
+/// current status and the derived status so explicit signals (manual
+/// recalibrate, stderr detection) are never downgraded.
+fn derive_window_statuses(facts: &mut QuotaFacts, now: DateTime<Utc>) {
+    let keys: Vec<String> = facts.states.keys().cloned().collect();
+    for key in keys {
+        let (limit, cadence_secs, multiplier) = {
+            let state = &facts.states[&key];
+            let Some(cadence) = &state.reset_cadence else {
+                continue;
+            };
+            let Some(limit) = cadence.limit_in_window else {
+                continue;
+            };
+            if limit == 0 {
+                continue;
+            }
+            (
+                limit,
+                cadence.cadence_secs,
+                cadence.multiplier.unwrap_or(1.0).max(0.01),
+            )
+        };
+
+        let window_start = now - chrono::Duration::seconds(cadence_secs as i64);
+        let count = facts
+            .session_timestamps
+            .get(&key)
+            .map(|ts| ts.iter().filter(|t| **t >= window_start).count())
+            .unwrap_or(0);
+
+        let effective_count = (count as f64 * multiplier).ceil() as u32;
+        let remaining = ((limit as f64 - effective_count as f64) / limit as f64).clamp(0.0, 1.0);
+
+        let derived_status = if remaining <= 0.0 {
+            "exhausted"
+        } else if remaining < 0.1 {
+            "exhausted-soon"
+        } else if remaining < 0.3 {
+            "low"
+        } else {
+            "available"
+        };
+
+        let state = facts.states.get_mut(&key).unwrap();
+        state.sessions_in_window = Some(effective_count);
+
+        if quota_status_rank(derived_status) >= quota_status_rank(&state.status) {
+            let harness = quota_key_harness(&key);
+            state.status = derived_status.into();
+            state.remaining = Some(remaining);
+            state.detail = format!(
+                "{harness} {} {effective_count}/{limit} sessions, {:.0}% remaining",
+                state.window_kind,
+                remaining * 100.0
+            );
+            state.source = "derived.window-usage".into();
+            state.observed_at = now;
+        }
+    }
+}
+
 fn apply_journal_entry(entry: &JournalLine, facts: &mut JournalFacts) {
     match entry.event_type.as_str() {
         "picker.spawned" => apply_picker_spawned(&entry.payload, facts),
@@ -2058,6 +2126,7 @@ fn apply_quota_exhausted(payload: &serde_json::Value, facts: &mut QuotaFacts) {
             reset_cadence: None,
             api_budget: None,
             usage: None,
+            sessions_in_window: None,
             price_events: Vec::new(),
             observed_at,
         },
@@ -2092,6 +2161,7 @@ fn apply_quota_exhausted_soon(payload: &serde_json::Value, facts: &mut QuotaFact
             reset_cadence: None,
             api_budget: None,
             usage: None,
+            sessions_in_window: None,
             price_events: Vec::new(),
             observed_at,
         },
@@ -2116,6 +2186,7 @@ fn apply_quota_refilled(payload: &serde_json::Value, facts: &mut QuotaFacts) {
             reset_cadence: None,
             api_budget: None,
             usage: None,
+            sessions_in_window: None,
             price_events: Vec::new(),
             observed_at,
         },
@@ -2128,6 +2199,11 @@ fn apply_quota_usage_observed(payload: &serde_json::Value, facts: &mut QuotaFact
     };
     let observed_at = value_datetime(payload, "observed_at").unwrap_or_else(Utc::now);
     let key = quota_key(&harness, &window_kind);
+    facts
+        .session_timestamps
+        .entry(key.clone())
+        .or_default()
+        .push(observed_at);
     let state = facts.states.entry(key).or_insert_with(|| {
         configured_quota_state(
             &harness,
@@ -2191,6 +2267,7 @@ fn configured_quota_state(
         reset_cadence: None,
         api_budget: None,
         usage: None,
+        sessions_in_window: None,
         price_events: Vec::new(),
         observed_at,
     }
@@ -3489,5 +3566,259 @@ output-rate-per-1m = 0.28
         let response = dispatch("does-not-exist", b"{}", &state, &ctx);
         let json = serde_json::to_value(&response).unwrap();
         assert_eq!(json["error"]["kind"], "unknown-method");
+    }
+
+    #[test]
+    fn window_status_derives_from_session_count_vs_limit() {
+        let tmp = TempDir::new().unwrap();
+        let now = Utc::now();
+        let day_str = now.format("%Y-%m-%d").to_string();
+        let day = tmp.path().join(&day_str);
+        std::fs::create_dir_all(&day).unwrap();
+
+        // Write 50 usage-observed events within a 3-hour window (limit=80).
+        // 50/80 = 62.5% used → 37.5% remaining → status should be "available".
+        for i in 0..50u32 {
+            let ts = now - chrono::Duration::minutes(i as i64);
+            write_jsonl(
+                &day.join("journal.quota.jsonl"),
+                &serde_json::json!({
+                    "event_type": "quota.usage-observed",
+                    "timestamp": ts.to_rfc3339(),
+                    "trace_id": format!("trace-{i}"),
+                    "actor": "jam-svc-session",
+                    "payload": {
+                        "harness": "codex-cli",
+                        "window_kind": "local-messages",
+                        "session_id": format!("session-{i}"),
+                        "task_id": format!("task-{i}"),
+                        "input_tokens": 100000,
+                        "output_tokens": 5000,
+                        "source": "codex-json",
+                        "observed_at": ts.to_rfc3339()
+                    }
+                }),
+            );
+        }
+
+        let quota_config = tmp.path().join("blueberry.toml");
+        std::fs::write(
+            &quota_config,
+            r#"
+[quota.windows."codex-cli/local-messages"]
+reset-cadence-secs = 10800
+limit-in-window = 80
+multiplier = 1.0
+
+[quota.windows."claude-code/rate-limit"]
+reset-cadence-secs = 3600
+limit-in-window = 40
+multiplier = 1.0
+"#,
+        )
+        .unwrap();
+
+        let state =
+            state_with_journal_and_quota_config(tmp.path().to_path_buf(), Some(quota_config));
+        let ctx = trace_ctx();
+        let response = dispatch("world-snapshot", br#"{"task_id":"task-1"}"#, &state, &ctx);
+        let json = serde_json::to_value(response).unwrap();
+
+        let codex = &json["harness_quotas"]["codex-cli/local-messages"];
+        assert_eq!(codex["sessions_in_window"], 50);
+        assert_eq!(codex["status"], "available");
+        assert!(codex["remaining"].as_f64().unwrap() > 0.3);
+        assert_eq!(codex["source"], "derived.window-usage");
+
+        // Claude has 0 sessions → available at 100%.
+        let claude = &json["harness_quotas"]["claude-code/rate-limit"];
+        assert_eq!(claude["sessions_in_window"], 0);
+        assert_eq!(claude["status"], "available");
+        assert_eq!(claude["remaining"], 1.0);
+    }
+
+    #[test]
+    fn window_status_exhausted_when_over_limit() {
+        let tmp = TempDir::new().unwrap();
+        let now = Utc::now();
+        let day_str = now.format("%Y-%m-%d").to_string();
+        let day = tmp.path().join(&day_str);
+        std::fs::create_dir_all(&day).unwrap();
+
+        // Write 85 usage-observed events (limit=80) → exhausted.
+        for i in 0..85u32 {
+            let ts = now - chrono::Duration::minutes(i as i64);
+            write_jsonl(
+                &day.join("journal.quota.jsonl"),
+                &serde_json::json!({
+                    "event_type": "quota.usage-observed",
+                    "timestamp": ts.to_rfc3339(),
+                    "trace_id": format!("trace-{i}"),
+                    "actor": "jam-svc-session",
+                    "payload": {
+                        "harness": "codex-cli",
+                        "window_kind": "local-messages",
+                        "session_id": format!("session-{i}"),
+                        "task_id": format!("task-{i}"),
+                        "input_tokens": 100000,
+                        "output_tokens": 5000,
+                        "source": "codex-json",
+                        "observed_at": ts.to_rfc3339()
+                    }
+                }),
+            );
+        }
+
+        let quota_config = tmp.path().join("blueberry.toml");
+        std::fs::write(
+            &quota_config,
+            r#"
+[quota.windows."codex-cli/local-messages"]
+reset-cadence-secs = 10800
+limit-in-window = 80
+multiplier = 1.0
+"#,
+        )
+        .unwrap();
+
+        let state =
+            state_with_journal_and_quota_config(tmp.path().to_path_buf(), Some(quota_config));
+        let ctx = trace_ctx();
+        let response = dispatch("world-snapshot", br#"{"task_id":"task-1"}"#, &state, &ctx);
+        let json = serde_json::to_value(response).unwrap();
+
+        let codex = &json["harness_quotas"]["codex-cli/local-messages"];
+        assert_eq!(codex["sessions_in_window"], 85);
+        assert_eq!(codex["status"], "exhausted");
+        assert_eq!(codex["remaining"], 0.0);
+    }
+
+    #[test]
+    fn window_status_low_near_limit() {
+        let tmp = TempDir::new().unwrap();
+        let now = Utc::now();
+        let day_str = now.format("%Y-%m-%d").to_string();
+        let day = tmp.path().join(&day_str);
+        std::fs::create_dir_all(&day).unwrap();
+
+        // 57 of 80 = 28.75% remaining < 30% → "low".
+        for i in 0..57u32 {
+            let ts = now - chrono::Duration::minutes(i as i64);
+            write_jsonl(
+                &day.join("journal.quota.jsonl"),
+                &serde_json::json!({
+                    "event_type": "quota.usage-observed",
+                    "timestamp": ts.to_rfc3339(),
+                    "trace_id": format!("trace-{i}"),
+                    "actor": "jam-svc-session",
+                    "payload": {
+                        "harness": "codex-cli",
+                        "window_kind": "local-messages",
+                        "session_id": format!("session-{i}"),
+                        "task_id": format!("task-{i}"),
+                        "input_tokens": 100000,
+                        "output_tokens": 5000,
+                        "source": "codex-json",
+                        "observed_at": ts.to_rfc3339()
+                    }
+                }),
+            );
+        }
+
+        let quota_config = tmp.path().join("blueberry.toml");
+        std::fs::write(
+            &quota_config,
+            r#"
+[quota.windows."codex-cli/local-messages"]
+reset-cadence-secs = 10800
+limit-in-window = 80
+multiplier = 1.0
+"#,
+        )
+        .unwrap();
+
+        let state =
+            state_with_journal_and_quota_config(tmp.path().to_path_buf(), Some(quota_config));
+        let ctx = trace_ctx();
+        let response = dispatch("world-snapshot", br#"{"task_id":"task-1"}"#, &state, &ctx);
+        let json = serde_json::to_value(response).unwrap();
+
+        let codex = &json["harness_quotas"]["codex-cli/local-messages"];
+        assert_eq!(codex["sessions_in_window"], 57);
+        assert_eq!(codex["status"], "low");
+        let remaining = codex["remaining"].as_f64().unwrap();
+        assert!(remaining > 0.2 && remaining < 0.3, "remaining={remaining}");
+    }
+
+    #[test]
+    fn explicit_exhausted_not_downgraded_by_window_derivation() {
+        let tmp = TempDir::new().unwrap();
+        let now = Utc::now();
+        let day_str = now.format("%Y-%m-%d").to_string();
+        let day = tmp.path().join(&day_str);
+        std::fs::create_dir_all(&day).unwrap();
+
+        // Only 5 sessions (well under limit), BUT an explicit quota.exhausted
+        // event says the harness is exhausted (e.g. detected from stderr).
+        for i in 0..5u32 {
+            let ts = now - chrono::Duration::minutes(i as i64 + 30);
+            write_jsonl(
+                &day.join("journal.quota.jsonl"),
+                &serde_json::json!({
+                    "event_type": "quota.usage-observed",
+                    "timestamp": ts.to_rfc3339(),
+                    "trace_id": format!("trace-{i}"),
+                    "actor": "jam-svc-session",
+                    "payload": {
+                        "harness": "codex-cli",
+                        "window_kind": "local-messages",
+                        "session_id": format!("session-{i}"),
+                        "task_id": format!("task-{i}"),
+                        "input_tokens": 100000,
+                        "output_tokens": 5000,
+                        "source": "codex-json",
+                        "observed_at": ts.to_rfc3339()
+                    }
+                }),
+            );
+        }
+        // Explicit exhausted signal.
+        let exhaust_ts = now - chrono::Duration::minutes(5);
+        write_jsonl(
+            &day.join("journal.quota.jsonl"),
+            &serde_json::json!({
+                "event_type": "quota.exhausted",
+                "timestamp": exhaust_ts.to_rfc3339(),
+                "trace_id": "trace-exhausted",
+                "actor": "jam-svc-session",
+                "payload": {
+                    "harness": "codex-cli",
+                    "window_kind": "local-messages",
+                    "detected_at": exhaust_ts.to_rfc3339()
+                }
+            }),
+        );
+
+        let quota_config = tmp.path().join("blueberry.toml");
+        std::fs::write(
+            &quota_config,
+            r#"
+[quota.windows."codex-cli/local-messages"]
+reset-cadence-secs = 10800
+limit-in-window = 80
+multiplier = 1.0
+"#,
+        )
+        .unwrap();
+
+        let state =
+            state_with_journal_and_quota_config(tmp.path().to_path_buf(), Some(quota_config));
+        let ctx = trace_ctx();
+        let response = dispatch("world-snapshot", br#"{"task_id":"task-1"}"#, &state, &ctx);
+        let json = serde_json::to_value(response).unwrap();
+
+        let codex = &json["harness_quotas"]["codex-cli/local-messages"];
+        // Explicit exhausted is rank 3, derived "available" is rank 1 → keep exhausted.
+        assert_eq!(codex["status"], "exhausted");
     }
 }

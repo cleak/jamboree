@@ -20,8 +20,8 @@ use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use futures::StreamExt;
 use jam_events::generated::{
-    Event, PickerExited, PickerFirstOutput, PickerKilled, PickerSpawned, QuotaUsageObserved,
-    TaskAbandoned,
+    Event, PickerExited, PickerFirstOutput, PickerKilled, PickerSpawned, QuotaExhausted,
+    QuotaUsageObserved, TaskAbandoned,
 };
 use jam_events::EventEnvelope;
 use jam_nats::async_nats;
@@ -919,7 +919,7 @@ async fn launch_picker(
     };
 
     publish_picker_spawned(nats, &handle, &picker_trace, ctx).await?;
-    watch_picker_output(
+    let quota_exhausted_flag = watch_picker_output(
         nats.clone(),
         handle.clone(),
         picker_trace.clone(),
@@ -957,6 +957,7 @@ async fn launch_picker(
         handle.clone(),
         picker_trace,
         ctx.clone(),
+        quota_exhausted_flag,
     );
 
     Ok(handle)
@@ -2735,6 +2736,88 @@ fn quota_window_kind_for_harness(harness: &str) -> &'static str {
     }
 }
 
+const RATE_LIMIT_PATTERNS: &[&str] = &[
+    "rate limit",
+    "rate_limit",
+    "rate-limit",
+    "ratelimit",
+    "too many requests",
+    "too many messages",
+    "usage limit",
+    "you've reached your limit",
+    "you have reached your limit",
+    "quota exceeded",
+    "request limit reached",
+    "limit reached",
+];
+
+#[cfg(test)]
+fn detect_quota_exhaustion_in_log(log_path: &Path, harness: &str) -> bool {
+    let Ok(raw) = fs::read_to_string(log_path) else {
+        return false;
+    };
+    for line in raw.lines() {
+        let Ok(record) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if record.get("stream").and_then(|v| v.as_str()) != Some("stderr") {
+            continue;
+        }
+        let Some(text) = record.get("line").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let lower = text.to_ascii_lowercase();
+        if RATE_LIMIT_PATTERNS
+            .iter()
+            .any(|pattern| lower.contains(pattern))
+        {
+            info!(
+                harness,
+                line = text,
+                "detected rate-limit signal in Picker stderr"
+            );
+            return true;
+        }
+    }
+    // Also check Codex-specific: exit code alone with very short runtime can
+    // indicate quota hit (Codex exits immediately when throttled).
+    false
+}
+
+async fn publish_quota_exhausted(
+    nats: &JamNats,
+    handle: &PickerHandle,
+    detected_at: DateTime<Utc>,
+    picker_trace: &TraceCtx,
+    parent_trace: &TraceCtx,
+) -> Result<(), SessionError> {
+    let payload = QuotaExhausted {
+        harness: handle.harness.clone(),
+        window_kind: quota_window_kind_for_harness(&handle.harness).into(),
+        resets_at: None,
+        detected_at,
+    };
+    let envelope = EventEnvelope::new(
+        QuotaExhausted::EVENT_TYPE,
+        QuotaExhausted::EVENT_SUBTYPE_VERSION,
+        0,
+        picker_trace.trace_id.to_string(),
+        SERVICE_NAME,
+        payload,
+    )
+    .with_parent_trace(parent_trace.trace_id.to_string());
+    nats.publish_traced("journal.quota.exhausted", &envelope, picker_trace)
+        .await
+        .map_err(|err| {
+            SessionError::protocol(
+                "journal-publish-failed",
+                err.to_string(),
+                "Verify NATS is running and the journal bridge is healthy.",
+                "principle-failure-surfaces-immediately",
+            )
+        })
+}
+
 fn parse_usage_jsonl(raw: &str, source: &'static str) -> Option<QuotaUsageObservation> {
     let mut preferred = QuotaUsageObservation {
         source,
@@ -2895,9 +2978,10 @@ fn watch_picker_output(
     stdout: Option<ChildStdout>,
     stderr: Option<ChildStderr>,
     output_log: Arc<Mutex<tokio::fs::File>>,
-) {
+) -> Arc<AtomicBool> {
     let sequence = Arc::new(AtomicU64::new(0));
     let first_output = Arc::new(AtomicBool::new(false));
+    let quota_exhausted_flag = Arc::new(AtomicBool::new(false));
     let usage_stdout_path =
         direct_stdout_log_path_for_harness(&handle.harness, Path::new(&handle.worktree_path))
             .filter(|_| !handle.dry_run);
@@ -2914,6 +2998,7 @@ fn watch_picker_output(
             output_log.clone(),
             sequence.clone(),
             first_output.clone(),
+            quota_exhausted_flag.clone(),
         );
     }
     if let Some(stderr) = stderr {
@@ -2928,8 +3013,10 @@ fn watch_picker_output(
             output_log,
             sequence,
             first_output,
+            quota_exhausted_flag.clone(),
         );
     }
+    quota_exhausted_flag
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2944,6 +3031,7 @@ fn spawn_picker_output_reader<R>(
     output_log: Arc<Mutex<tokio::fs::File>>,
     sequence: Arc<AtomicU64>,
     first_output: Arc<AtomicBool>,
+    quota_exhausted_flag: Arc<AtomicBool>,
 ) where
     R: AsyncRead + Unpin + Send + 'static,
 {
@@ -3028,6 +3116,20 @@ fn spawn_picker_output_reader<R>(
                 sequence: sequence.fetch_add(1, Ordering::SeqCst),
                 truncated,
             };
+            if stream == "stderr" && !quota_exhausted_flag.load(Ordering::Relaxed) {
+                let lower = record.line.to_ascii_lowercase();
+                if RATE_LIMIT_PATTERNS
+                    .iter()
+                    .any(|pattern| lower.contains(pattern))
+                {
+                    info!(
+                        session_id = %handle.session_id,
+                        line = %record.line,
+                        "detected rate-limit signal in Picker stderr"
+                    );
+                    quota_exhausted_flag.store(true, Ordering::SeqCst);
+                }
+            }
             append_picker_output_log(&output_log, &record).await;
             publish_picker_output(&nats, &record, &picker_trace).await;
         }
@@ -3103,6 +3205,7 @@ fn watch_picker_exit(
     handle: PickerHandle,
     picker_trace: TraceCtx,
     parent_trace: TraceCtx,
+    quota_exhausted_flag: Arc<AtomicBool>,
 ) {
     let session_id = handle.session_id.clone();
     tokio::spawn(async move {
@@ -3151,6 +3254,24 @@ fn watch_picker_exit(
                         &parent_trace,
                     )
                     .await;
+                    if exit_code.is_some_and(|c| c != 0)
+                        && quota_exhausted_flag.load(Ordering::SeqCst)
+                    {
+                        if let Err(err) = publish_quota_exhausted(
+                            &nats,
+                            &handle,
+                            exited_at,
+                            &picker_trace,
+                            &parent_trace,
+                        )
+                        .await
+                        {
+                            warn!(
+                                session_id = %handle.session_id,
+                                "failed to publish quota.exhausted: {err}"
+                            );
+                        }
+                    }
                     if exit_code == Some(0) {
                         if let Err(err) = maybe_open_pr_for_successful_picker(
                             &nats,
@@ -6600,5 +6721,75 @@ checksum-sha256 = "{checksum}"
             )
             .unwrap();
         }
+    }
+
+    #[test]
+    fn detects_rate_limit_in_stderr_log() {
+        let tmp = TempDir::new().unwrap();
+        let log_path = tmp.path().join("test-session.jsonl");
+        let mut file = std::fs::File::create(&log_path).unwrap();
+        use std::io::Write;
+        writeln!(
+            file,
+            r#"{{"stream":"stdout","line":"Starting task...","session_id":"s1","task_id":"t1","trace_id":"tr1","ts":"2026-05-06T10:00:00Z","sequence":0,"truncated":false}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            r#"{{"stream":"stderr","line":"Error: rate limit exceeded, try again later","session_id":"s1","task_id":"t1","trace_id":"tr1","ts":"2026-05-06T10:00:01Z","sequence":1,"truncated":false}}"#
+        )
+        .unwrap();
+
+        assert!(detect_quota_exhaustion_in_log(&log_path, "codex-cli"));
+    }
+
+    #[test]
+    fn no_false_positive_on_normal_stderr() {
+        let tmp = TempDir::new().unwrap();
+        let log_path = tmp.path().join("test-session.jsonl");
+        let mut file = std::fs::File::create(&log_path).unwrap();
+        use std::io::Write;
+        writeln!(
+            file,
+            r#"{{"stream":"stderr","line":"warning: unused variable `x`","session_id":"s1","task_id":"t1","trace_id":"tr1","ts":"2026-05-06T10:00:00Z","sequence":0,"truncated":false}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            r#"{{"stream":"stderr","line":"Error: compilation failed","session_id":"s1","task_id":"t1","trace_id":"tr1","ts":"2026-05-06T10:00:01Z","sequence":1,"truncated":false}}"#
+        )
+        .unwrap();
+
+        assert!(!detect_quota_exhaustion_in_log(&log_path, "codex-cli"));
+    }
+
+    #[test]
+    fn detects_429_in_stderr() {
+        let tmp = TempDir::new().unwrap();
+        let log_path = tmp.path().join("test-session.jsonl");
+        let mut file = std::fs::File::create(&log_path).unwrap();
+        use std::io::Write;
+        writeln!(
+            file,
+            r#"{{"stream":"stderr","line":"HTTP 429 Too Many Requests","session_id":"s1","task_id":"t1","trace_id":"tr1","ts":"2026-05-06T10:00:00Z","sequence":0,"truncated":false}}"#
+        )
+        .unwrap();
+
+        assert!(detect_quota_exhaustion_in_log(&log_path, "claude-code"));
+    }
+
+    #[test]
+    fn ignores_stdout_rate_limit_messages() {
+        let tmp = TempDir::new().unwrap();
+        let log_path = tmp.path().join("test-session.jsonl");
+        let mut file = std::fs::File::create(&log_path).unwrap();
+        use std::io::Write;
+        writeln!(
+            file,
+            r#"{{"stream":"stdout","line":"I'm getting rate limited by the API","session_id":"s1","task_id":"t1","trace_id":"tr1","ts":"2026-05-06T10:00:00Z","sequence":0,"truncated":false}}"#
+        )
+        .unwrap();
+
+        assert!(!detect_quota_exhaustion_in_log(&log_path, "codex-cli"));
     }
 }

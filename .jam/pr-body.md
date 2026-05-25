@@ -1,14 +1,14 @@
 ## Summary
 
-- Gives shared editable controls a subtle tinted background in light and dark mode so text fields, textareas, and dropdowns stand out before focus.
-- Ensures the shared editable-control background wins over existing `bg-white` utility classes without changing task target behavior.
+- Adds count badges to every left sidebar tab in the Jamboree UI.
+- Uses current task lifecycle data for task-oriented counts, including PRs as the number of tasks currently in a PR phase.
+- Keeps the task target boundary unchanged; Blueberry and Jamboree task creation/API behavior is not modified.
 
 ## Verification
 
-- `cd ui && npm ci` - passed, installed locked dependencies.
+- `cd ui && npm ci` - installed dependencies from `package-lock.json`.
 - `cd ui && npm run build` - passed.
-- `tempyr validate` - failed on pre-existing graph errors in `dec-post-picker-coordination` unrelated to this UI-only change.
 
 ## Notes
 
-- Recorded the shared-control-styling decision in Tempyr journal entry `j-6c160ebb3bf144368a3d27420ff82c2c`.
+- Recorded the PR-phase count decision in Tempyr journal entry `j-e2aee7c8901d46edab1b76eba4806f5f`.

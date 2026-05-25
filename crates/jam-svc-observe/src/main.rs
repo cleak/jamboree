@@ -2152,7 +2152,7 @@ fn apply_quota_exhausted_soon(payload: &serde_json::Value, facts: &mut QuotaFact
     facts.states.insert(
         key,
         HarnessQuotaState {
-            status: "low".into(),
+            status: "exhausted-soon".into(),
             detail,
             window_kind,
             source: "journal.quota.exhausted-soon".into(),

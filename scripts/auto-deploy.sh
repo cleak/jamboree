@@ -32,6 +32,16 @@
 
 set -uo pipefail
 
+# Cron runs with a minimal PATH. Ensure cargo, jam, npm, and node are
+# reachable. Source order mirrors ~/.profile precedence.
+export PATH="$HOME/.cargo/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin${PATH:+:$PATH}"
+# nvm installs node/npm under a versioned path; source nvm if available.
+export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+# shellcheck source=/dev/null
+[[ -s "$NVM_DIR/nvm.sh" ]] && . "$NVM_DIR/nvm.sh" --no-use 2>/dev/null
+# Activate the default node version (adds its bin/ to PATH).
+command -v nvm &>/dev/null && nvm use default --silent 2>/dev/null
+
 REPO_DIR="${JAM_AUTO_DEPLOY_REPO:-/home/caleb/jamboree}"
 STATE_DIR="${JAM_AUTO_DEPLOY_STATE_DIR:-$HOME/.jam}"
 STATE_FILE="$STATE_DIR/last-auto-deploy.sha"

@@ -44,6 +44,8 @@ environment:
   - JAM_GITHUB_REPO=cleak/blueberry
   - JAM_CODEX_HOME=/home/picker/.codex
   - JAM_CODEX_BIN=/home/picker/.npm-global/bin/codex
+  - JAM_CODEX_MODEL=gpt-5.3-codex
+  - JAM_CODEX_REASONING_EFFORT=high
   - JAM_PICKER_PATH=/home/caleb/.local/share/tempyr/bin:/home/picker/.local/share/tempyr/bin:/home/picker/.cargo/bin:/home/picker/.npm-global/bin:/home/maestro/.npm-global/bin:/usr/local/bin:/usr/bin:/bin
   - JAM_SESSION_USE_SYSTEMD_SCOPE=false
   - JAM_SESSION_OPEN_PR_DRAFT=false

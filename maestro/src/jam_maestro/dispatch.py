@@ -56,6 +56,17 @@ DEFAULT_BUDGET_USD: dict[str, float] = {
     "shader-variant": 8.0,
 }
 
+DEFAULT_REASONING_EFFORT: dict[str, str] = {
+    "coderabbit-review": "high",
+    "compile-heavy-rust": "high",
+    "doc-generation": "medium",
+    "ecs-refactor": "high",
+    "jamboree-self-modification": "high",
+    "light-edit": "high",
+    "risky-architecture": "xhigh",
+    "shader-variant": "high",
+}
+
 
 class QuotaDisposition(StrEnum):
     """Routing view of a harness quota state."""
@@ -340,6 +351,7 @@ def _spawn_request(wake: TaskWake, harness: str, task_class: str) -> SessionSpaw
         task_class=task_class,
         initial_prompt=_initial_prompt(wake, harness, task_class),
         model_override=_model_override(harness, task_class),
+        reasoning_effort=_reasoning_effort(harness, task_class),
         budget_usd=DEFAULT_BUDGET_USD.get(task_class, 2.0),
     )
 
@@ -374,6 +386,12 @@ def _model_override(harness: str, task_class: str) -> str | None:
     if harness == "opencode-deepseek":
         return "deepseek-v4-pro"
     return None
+
+
+def _reasoning_effort(harness: str, task_class: str) -> str | None:
+    if harness == "opencode-deepseek" and task_class in {"doc-generation", "light-edit"}:
+        return "medium"
+    return DEFAULT_REASONING_EFFORT.get(task_class, "high")
 
 
 def _readiness_status(snapshot: Mapping[str, object]) -> str:

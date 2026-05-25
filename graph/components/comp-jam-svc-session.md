@@ -3,7 +3,7 @@ id: comp-jam-svc-session
 type: component
 status: active
 created: 2026-05-04T03:39:30.775848907Z
-updated: 2026-05-10T00:00:00Z
+updated: 2026-05-25T00:00:00Z
 edges:
 - target: api-archive-session
   type: exposes
@@ -72,3 +72,5 @@ Implementation note (2026-05-06): local spawns now use cgroup v2 resource scopes
 Lifecycle note (2026-05-06): `archive-session` and `purge-session` are implemented for completed sessions. Archive removes the session from service state and journals `journal.session.archived` while retaining the worktree/artifacts. Purge requires a reason, refuses running/killing sessions, publishes `journal.task.abandoned` plus `journal.session.purged`, and deletes the retained worktree unless `preserve_worktree=true`.
 
 Runtime note (2026-05-10): the live Blueberry deployment sets `JAM_HARNESS_LOCKFILE_POLICY=warn`, `JAM_SESSION_OPEN_PR_DRAFT=false`, and captures Picker output under `/home/maestro/.jam/session-logs/<session_id>.jsonl`. The service asks Pickers to write `.jam/pr-title.txt` and `.jam/pr-body.md`; Jamboree adds the `[jam]` PR title prefix deterministically.
+
+Runtime note (2026-05-25): Codex launch args now include an explicit model and reasoning effort even when the spawn request omits them. Defaults are `JAM_CODEX_MODEL=gpt-5.3-codex` and `JAM_CODEX_REASONING_EFFORT=high`, both surfaced in `process-compose.yaml`; task dispatch can still override them through `model_override` and `reasoning_effort`.

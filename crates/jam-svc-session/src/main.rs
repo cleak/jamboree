@@ -12,20 +12,20 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command as StdCommand, Output, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use futures::StreamExt;
+use jam_events::EventEnvelope;
 use jam_events::generated::{
     Event, PickerExited, PickerFirstOutput, PickerKilled, PickerSpawned, QuotaUsageObserved,
     TaskAbandoned,
 };
-use jam_events::EventEnvelope;
-use jam_nats::async_nats;
 use jam_nats::JamNats;
+use jam_nats::async_nats;
 use jam_secrets::{ExposeSecret, FileBackend, PassBackend, SecretBackend, SecretKey, SecretString};
 use jam_trace::TraceCtx;
 use serde::{Deserialize, Serialize};
@@ -65,6 +65,8 @@ const DEFAULT_SYSTEMD_RUN_BIN: &str = "systemd-run";
 const DEFAULT_IONICE_BIN: &str = "ionice";
 const DEFAULT_OPENCODE_MODEL: &str = "deepseek/deepseek-v4-pro";
 const DEFAULT_OPENCODE_SMALL_MODEL: &str = "deepseek/deepseek-v4-flash";
+const DEFAULT_CODEX_MODEL: &str = "gpt-5.3-codex";
+const DEFAULT_CODEX_REASONING_EFFORT: &str = "high";
 const DEFAULT_PICKER_HOME: &str = "/home/picker";
 const DEFAULT_CODEX_HOME: &str = "/home/maestro/.codex";
 const DEFAULT_SUDO_BIN: &str = "sudo";
@@ -155,6 +157,8 @@ struct SessionConfig {
     docker_image: String,
     systemd_run_bin: PathBuf,
     ionice_bin: PathBuf,
+    codex_model: Option<String>,
+    codex_reasoning_effort: String,
     opencode_model: String,
     opencode_small_model: String,
     project_config_path: PathBuf,
@@ -200,6 +204,10 @@ impl SessionConfig {
             .map_or_else(|| DEFAULT_SYSTEMD_RUN_BIN.into(), PathBuf::from);
         let ionice_bin = std::env::var_os("JAM_IONICE_BIN")
             .map_or_else(|| DEFAULT_IONICE_BIN.into(), PathBuf::from);
+        let codex_model =
+            nonempty_env("JAM_CODEX_MODEL").or_else(|| Some(DEFAULT_CODEX_MODEL.into()));
+        let codex_reasoning_effort = nonempty_env("JAM_CODEX_REASONING_EFFORT")
+            .unwrap_or_else(|| DEFAULT_CODEX_REASONING_EFFORT.into());
         let opencode_model =
             std::env::var("JAM_OPENCODE_MODEL").unwrap_or_else(|_| DEFAULT_OPENCODE_MODEL.into());
         let opencode_small_model = std::env::var("JAM_OPENCODE_SMALL_MODEL")
@@ -261,6 +269,8 @@ impl SessionConfig {
             docker_image,
             systemd_run_bin,
             ionice_bin,
+            codex_model,
+            codex_reasoning_effort,
             opencode_model,
             opencode_small_model,
             project_config_path,
@@ -568,6 +578,8 @@ async fn run() -> Result<(), ServiceError> {
         docker_bin = %config.docker_bin.display(),
         docker_image = %config.docker_image,
         systemd_run_bin = %config.systemd_run_bin.display(),
+        codex_model = %config.codex_model.as_deref().unwrap_or("<codex-default>"),
+        codex_reasoning_effort = %config.codex_reasoning_effort,
         opencode_model = %config.opencode_model,
         project_config = %config.project_config_path.display(),
         session_log_root = %config.session_log_root.display(),
@@ -1644,12 +1656,17 @@ fn append_live_harness_args(
     match spec.harness.as_str() {
         CLAUDE_HARNESS => append_claude_args(command, spec, worktree_path),
         OPENCODE_HARNESS => append_opencode_args(command, config, spec, worktree_path)?,
-        _ => append_codex_args(command, spec, worktree_path),
+        _ => append_codex_args(command, config, spec, worktree_path),
     }
     Ok(())
 }
 
-fn append_codex_args(command: &mut Command, spec: &SpawnSpec, worktree_path: &Path) {
+fn append_codex_args(
+    command: &mut Command,
+    config: &SessionConfig,
+    spec: &SpawnSpec,
+    worktree_path: &Path,
+) {
     command.arg("--ask-for-approval");
     command.arg("never");
     command.arg("exec");
@@ -1659,11 +1676,15 @@ fn append_codex_args(command: &mut Command, spec: &SpawnSpec, worktree_path: &Pa
     // managed workspace-write sandbox keeps linked worktree gitdirs read-only.
     command.arg("--dangerously-bypass-approvals-and-sandbox");
     command.arg("--json");
-    if let Some(model) = &spec.model_override {
+    if let Some(model) = spec.model_override.as_ref().or(config.codex_model.as_ref()) {
         command.arg("--model");
         command.arg(model);
     }
-    if let Some(effort) = &spec.reasoning_effort {
+    if let Some(effort) = spec
+        .reasoning_effort
+        .as_ref()
+        .or(Some(&config.codex_reasoning_effort))
+    {
         command.arg("--config");
         command.arg(format!("model_reasoning_effort=\"{effort}\""));
     }
@@ -4106,7 +4127,10 @@ async fn remove_completed_session(
     if matches!(record.status, PickerStatus::Running | PickerStatus::Killing) {
         return Err(SessionError::protocol(
             "session-still-running",
-            format!("{action} requires a completed session; {session_id} is {:?}", record.status),
+            format!(
+                "{action} requires a completed session; {session_id} is {:?}",
+                record.status
+            ),
             "Use full-stop for running sessions, then archive or purge once the session is killed/exited.",
             tracked_by,
         ));
@@ -4491,7 +4515,10 @@ fn verify_harness_lockfile(
     if version != pin.version {
         return Err(SessionError::protocol(
             "harness-version-drift",
-            format!("{harness} version is {version}, lockfile expects {}", pin.version),
+            format!(
+                "{harness} version is {version}, lockfile expects {}",
+                pin.version
+            ),
             "Run the harness validation workflow, then update the lockfile if this version is approved.",
             "comp-harness-version-lockfile",
         ));
@@ -5105,6 +5132,13 @@ fn parse_bool_env(name: &str) -> Option<bool> {
     }
 }
 
+fn nonempty_env(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
 fn shell_words(raw: &str) -> Vec<String> {
     raw.split_whitespace().map(ToOwned::to_owned).collect()
 }
@@ -5220,10 +5254,12 @@ mod tests {
             budget_usd: None,
             dry_run: None,
         };
-        assert!(SpawnSpec::from_input(input)
-            .unwrap_err()
-            .to_string()
-            .contains("unsupported-sandbox-combination"));
+        assert!(
+            SpawnSpec::from_input(input)
+                .unwrap_err()
+                .to_string()
+                .contains("unsupported-sandbox-combination")
+        );
     }
 
     #[test]
@@ -5329,14 +5365,16 @@ mod tests {
 
         let spec = SpawnSpec::from_input(input).unwrap();
 
-        assert!(spec
-            .initial_prompt
-            .contains("Implement the requested cleanup."));
+        assert!(
+            spec.initial_prompt
+                .contains("Implement the requested cleanup.")
+        );
         assert!(spec.initial_prompt.contains(".jam/pr-title.txt"));
         assert!(spec.initial_prompt.contains(".jam/pr-body.md"));
-        assert!(spec
-            .initial_prompt
-            .contains("Jamboree adds [jam] deterministically"));
+        assert!(
+            spec.initial_prompt
+                .contains("Jamboree adds [jam] deterministically")
+        );
     }
 
     #[test]
@@ -5404,8 +5442,18 @@ mod tests {
         assert!(args.contains(&OsString::from("exec").as_os_str()));
         assert!(args.contains(&OsString::from("--cd").as_os_str()));
         assert!(args.contains(&worktree.path().as_os_str()));
-        assert!(args
-            .contains(&OsString::from("--dangerously-bypass-approvals-and-sandbox").as_os_str()));
+        assert!(args.windows(2).any(|pair| {
+            pair[0] == OsStr::new("--model") && pair[1] == OsStr::new(DEFAULT_CODEX_MODEL)
+        }));
+        assert!(args.windows(2).any(|pair| {
+            pair[0] == OsStr::new("--config")
+                && pair[1] == OsStr::new(r#"model_reasoning_effort="high""#)
+        }));
+        assert!(
+            args.contains(
+                &OsString::from("--dangerously-bypass-approvals-and-sandbox").as_os_str()
+            )
+        );
         assert!(codex_events_path(worktree.path()).exists());
         assert_eq!(
             command
@@ -5551,9 +5599,10 @@ mod tests {
         let resume_pos = args.iter().position(|arg| arg == "resume").unwrap();
         assert!(exec_pos < cd_pos);
         assert!(cd_pos < resume_pos);
-        assert!(args
-            .windows(2)
-            .any(|window| window == [OsString::from("resume"), OsString::from("--last")]));
+        assert!(
+            args.windows(2)
+                .any(|window| window == [OsString::from("resume"), OsString::from("--last")])
+        );
         assert!(args.contains(&OsString::from("--cd")));
         assert!(args.contains(&worktree.path().as_os_str().to_os_string()));
     }
@@ -6292,18 +6341,18 @@ github-mcp = { url = "https://api.githubcopilot.com/mcp/", enabled = true, auth 
 
         validate_picker_message_payload(&payload, "codex-cli:session", PickerMessageMode::Queue)
             .unwrap();
-        assert!(validate_picker_message_payload(
-            &payload,
-            "codex-cli:other",
-            PickerMessageMode::Queue,
-        )
-        .is_err());
-        assert!(validate_picker_message_payload(
-            &payload,
-            "codex-cli:session",
-            PickerMessageMode::Interrupt,
-        )
-        .is_err());
+        assert!(
+            validate_picker_message_payload(&payload, "codex-cli:other", PickerMessageMode::Queue,)
+                .is_err()
+        );
+        assert!(
+            validate_picker_message_payload(
+                &payload,
+                "codex-cli:session",
+                PickerMessageMode::Interrupt,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -6437,6 +6486,8 @@ github-mcp = { url = "https://api.githubcopilot.com/mcp/", enabled = true, auth 
             docker_image: DEFAULT_DOCKER_IMAGE.into(),
             systemd_run_bin: PathBuf::from("/usr/bin/systemd-run"),
             ionice_bin: PathBuf::from("/usr/bin/ionice"),
+            codex_model: Some(DEFAULT_CODEX_MODEL.into()),
+            codex_reasoning_effort: DEFAULT_CODEX_REASONING_EFFORT.into(),
             opencode_model: DEFAULT_OPENCODE_MODEL.into(),
             opencode_small_model: DEFAULT_OPENCODE_SMALL_MODEL.into(),
             project_config_path: PathBuf::from("/tmp/blueberry.toml"),

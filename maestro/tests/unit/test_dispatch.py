@@ -34,6 +34,7 @@ def test_dispatch_prefers_skill_harness_when_quota_available() -> None:
     assert dispatch.quota == QuotaDisposition.AVAILABLE
     assert dispatch.spawn_request.harness == "codex-cli"
     assert dispatch.spawn_request.task_class == "light-edit"
+    assert dispatch.spawn_request.reasoning_effort == "high"
 
 
 def test_dispatch_falls_back_when_preferred_harness_exhausted() -> None:
@@ -206,6 +207,7 @@ def test_jamboree_dispatch_preserves_self_modification_target() -> None:
     assert isinstance(dispatch, DispatchChoice)
     assert dispatch.spawn_request.project == "jamboree"
     assert dispatch.spawn_request.task_class == "jamboree-self-modification"
+    assert dispatch.spawn_request.reasoning_effort == "high"
     assert "self-modifying task" in dispatch.spawn_request.initial_prompt
     assert "/home/caleb/jamboree directly" in dispatch.spawn_request.initial_prompt
 

@@ -1,1 +1,1 @@
-Center the new task composer
+feat(ui): center the new task composer

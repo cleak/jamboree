@@ -254,6 +254,12 @@ type RouteData = {
   deployTargets: DeployTargetRow[];
 };
 
+type NavItem = {
+  href: string;
+  label: string;
+  count: number;
+};
+
 const navItems = [
   { href: "/", label: "Dashboard" },
   { href: "/tasks", label: "Tasks" },
@@ -560,6 +566,21 @@ function App() {
   const maestroEvents = createMemo(() =>
     events().filter((event) => event.subject.includes(".maestro."))
   );
+  const navigationItems = createMemo<NavItem[]>(() =>
+    navItems.map((item) => ({
+      ...item,
+      count: navCount(item.href, {
+        events: events(),
+        services: services(),
+        taskRows: taskRows(),
+        pickerRows: pickerRows(),
+        traceRows: traceRows(),
+        quotaRows: quotaRows(),
+        maestroEvents: maestroEvents(),
+        tokenSaved: token().trim().length > 0
+      })
+    }))
+  );
 
   return (
     <Show
@@ -591,7 +612,7 @@ function App() {
             </button>
           </div>
           <nav class="flex gap-1 overflow-x-auto pb-3 lg:block lg:space-y-1 lg:overflow-visible lg:pb-0">
-            <For each={navItems}>
+            <For each={navigationItems()}>
               {(item) => (
                 <a
                   class="flex items-center justify-between rounded-md px-3 py-2 text-sm text-[#444444] hover:bg-[#e9e9ea]"
@@ -601,6 +622,13 @@ function App() {
                   href={item.href}
                 >
                   <span>{item.label}</span>
+                  <span
+                    class="ml-3 inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full border border-[#d7d7d7] bg-white px-1.5 text-[11px] font-medium tabular-nums text-[#62665e]"
+                    aria-label={`${item.count} ${item.label.toLowerCase()}`}
+                    title={navCountTitle(item.href)}
+                  >
+                    {formatNavCount(item.count)}
+                  </span>
                 </a>
               )}
             </For>
@@ -851,9 +879,7 @@ function DashboardView(props: {
     props.services.filter((service) => service.status.toLowerCase() === "disabled")
   );
   const serviceAttention = createMemo(() =>
-    props.services.filter(
-      (service) => !service.running && service.status.toLowerCase() !== "disabled"
-    )
+    props.services.filter(needsServiceAttention)
   );
   const backlogTasks = createMemo(() => props.taskRows.filter((task) => task.status === "backlog"));
   const activeTasks = createMemo(() =>
@@ -3162,6 +3188,64 @@ function routeView(path: string, data: RouteData) {
   );
 }
 
+type NavCountContext = {
+  events: BusEvent[];
+  services: ServiceRow[];
+  taskRows: TaskRow[];
+  pickerRows: PickerRow[];
+  traceRows: TraceRow[];
+  quotaRows: QuotaRow[];
+  maestroEvents: BusEvent[];
+  tokenSaved: boolean;
+};
+
+function navCount(href: string, context: NavCountContext) {
+  switch (href) {
+    case "/":
+      return context.taskRows.filter((task) => isInFlightTaskStatus(task.status)).length;
+    case "/tasks":
+      return context.taskRows.filter((task) => !isStaleTask(task)).length;
+    case "/prs":
+      return context.taskRows.filter((task) => isPrPhaseTaskStatus(task.status)).length;
+    case "/pickers":
+      return context.pickerRows.filter((picker) => isActivePickerStatus(picker.status)).length;
+    case "/maestro":
+      return context.maestroEvents.length;
+    case "/journal":
+      return context.events.length;
+    case "/traces":
+      return context.traceRows.length;
+    case "/quotas":
+      return context.quotaRows.filter((row) => isAttentionQuotaStatus(row.status)).length;
+    case "/health":
+      return context.services.filter((service) => needsServiceAttention(service)).length;
+    case "/settings":
+      return context.tokenSaved ? 1 : 0;
+    default:
+      return 0;
+  }
+}
+
+function navCountTitle(href: string) {
+  const titles: Record<string, string> = {
+    "/": "Tasks currently in flight",
+    "/tasks": "Non-stale tasks shown by default",
+    "/prs": "Tasks currently in the PR phase",
+    "/pickers": "Active Picker sessions",
+    "/maestro": "Recent Maestro events in the live buffer",
+    "/journal": "Recent journal events in the live buffer",
+    "/traces": "Trace IDs in the live buffer",
+    "/quotas": "Quota windows needing attention",
+    "/health": "Runtime services needing attention",
+    "/settings": "Saved UI session token"
+  };
+  return titles[href] ?? "Count";
+}
+
+function formatNavCount(count: number) {
+  return count > 999 ? "999+" : String(count);
+}
+
 function wsUrl(token: string, subject: string) {
   const url = new URL("/ws", window.location.href);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
@@ -3830,6 +3914,37 @@ function isFinalStatus(status: string) {
 function isOpenPrStatus(status: string) {
   const normalized = normalizeStatus(status);
   return normalized !== "merged" && normalized !== "closed" && normalized !== "abandoned";
+}
+
+function isPrPhaseTaskStatus(status: string) {
+  const normalized = normalizeStatus(status);
+  return (
+    normalized === "draft" ||
+    normalized === "in-review" ||
+    normalized === "review" ||
+    normalized === "open" ||
+    normalized === "pr-open"
+  );
+}
+
+function isActivePickerStatus(status: string) {
+  const normalized = normalizeStatus(status);
+  return (
+    normalized === "running" ||
+    normalized === "resuming" ||
+    normalized === "sending" ||
+    normalized === "interrupt-requested" ||
+    normalized === "interrupt-accepted"
+  );
+}
+
+function isAttentionQuotaStatus(status: string) {
+  const normalized = normalizeStatus(status);
+  return normalized === "low" || normalized === "exhausted" || normalized === "error";
+}
+
+function needsServiceAttention(service: ServiceRow) {
+  return !service.running && service.status.toLowerCase() !== "disabled";
 }
 
 function isActiveTaskStatus(status: string) {

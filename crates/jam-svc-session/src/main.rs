@@ -63,6 +63,8 @@ const DEFAULT_SHELL_BIN: &str = "/bin/sh";
 const DEFAULT_DOCKER_IMAGE: &str = "jam-picker:latest";
 const DEFAULT_SYSTEMD_RUN_BIN: &str = "systemd-run";
 const DEFAULT_IONICE_BIN: &str = "ionice";
+const DEFAULT_CODEX_MODEL: &str = "gpt-5.5";
+const DEFAULT_CODEX_REASONING_EFFORT: &str = "medium";
 const DEFAULT_OPENCODE_MODEL: &str = "deepseek/deepseek-v4-pro";
 const DEFAULT_OPENCODE_SMALL_MODEL: &str = "deepseek/deepseek-v4-flash";
 const DEFAULT_PICKER_HOME: &str = "/home/picker";
@@ -1660,14 +1662,13 @@ fn append_codex_args(command: &mut Command, spec: &SpawnSpec, worktree_path: &Pa
     // managed workspace-write sandbox keeps linked worktree gitdirs read-only.
     command.arg("--dangerously-bypass-approvals-and-sandbox");
     command.arg("--json");
-    if let Some(model) = &spec.model_override {
-        command.arg("--model");
-        command.arg(model);
-    }
-    if let Some(effort) = &spec.reasoning_effort {
-        command.arg("--config");
-        command.arg(format!("model_reasoning_effort=\"{effort}\""));
-    }
+    command.arg("--model");
+    command.arg(spec.model_override.as_deref().unwrap_or(DEFAULT_CODEX_MODEL));
+    command.arg("--config");
+    command.arg(format!(
+        "model_reasoning_effort=\"{}\"",
+        spec.reasoning_effort.as_deref().unwrap_or(DEFAULT_CODEX_REASONING_EFFORT)
+    ));
     if spec.resume_from_last {
         command.arg("resume");
         command.arg("--last");

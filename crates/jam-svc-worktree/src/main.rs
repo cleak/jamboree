@@ -437,11 +437,34 @@ async fn create_worktree(
     {
         let _create_guard = state.create_mutex.lock().await;
         if worktree_path.exists() {
-            return Err(WorktreeError::protocol(
-                "worktree-exists",
-                format!("worktree already exists: {}", worktree_path.display()),
-                "Choose a new task_id or clean up the existing Picker worktree.",
-            ));
+            if !worktree_path.join(".git").exists() {
+                return Err(WorktreeError::protocol(
+                    "worktree-corrupt",
+                    format!(
+                        "directory exists but is not a git worktree: {}",
+                        worktree_path.display()
+                    ),
+                    "Remove the directory and retry, or use a different task_id.",
+                ));
+            }
+            info!(
+                task = %input.task_id,
+                path = %worktree_path.display(),
+                "worktree already exists; returning existing worktree (idempotent retry)",
+            );
+            return Ok(WorktreeCreateOutput {
+                task_id: input.task_id,
+                project,
+                repo_path: repo_path.to_string_lossy().into_owned(),
+                worktree_path: worktree_path.to_string_lossy().into_owned(),
+                branch,
+                trunk_ref,
+                trunk_sha,
+                fetched: fetch.fetched,
+                branched_at: Utc::now(),
+                fetch_cursor_at_create: fetch.cursor_at,
+                trace_id: ctx.trace_id.to_string(),
+            });
         }
         let worktree_path_string = worktree_path.to_string_lossy().into_owned();
         git(

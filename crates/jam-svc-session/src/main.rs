@@ -65,6 +65,8 @@ const DEFAULT_SYSTEMD_RUN_BIN: &str = "systemd-run";
 const DEFAULT_IONICE_BIN: &str = "ionice";
 const DEFAULT_CODEX_MODEL: &str = "gpt-5.5";
 const DEFAULT_CODEX_REASONING_EFFORT: &str = "medium";
+const DEFAULT_CLAUDE_MODEL: &str = "claude-opus-4-7";
+const DEFAULT_CLAUDE_EFFORT: &str = "high";
 const DEFAULT_OPENCODE_MODEL: &str = "deepseek/deepseek-v4-pro";
 const DEFAULT_OPENCODE_SMALL_MODEL: &str = "deepseek/deepseek-v4-flash";
 const DEFAULT_PICKER_HOME: &str = "/home/picker";
@@ -1700,14 +1702,18 @@ fn append_claude_args(command: &mut Command, spec: &SpawnSpec, worktree_path: &P
     command.arg("--mcp-config");
     command.arg(claude_mcp_config_path(worktree_path));
     command.arg("--strict-mcp-config");
-    if let Some(model) = &spec.model_override {
-        command.arg("--model");
-        command.arg(model);
-    }
-    if let Some(effort) = &spec.reasoning_effort {
-        command.arg("--effort");
-        command.arg(effort);
-    }
+    command.arg("--model");
+    command.arg(
+        spec.model_override
+            .as_deref()
+            .unwrap_or(DEFAULT_CLAUDE_MODEL),
+    );
+    command.arg("--effort");
+    command.arg(
+        spec.reasoning_effort
+            .as_deref()
+            .unwrap_or(DEFAULT_CLAUDE_EFFORT),
+    );
     if let Some(budget) = spec.budget_usd {
         command.arg("--max-budget-usd");
         command.arg(budget.to_string());

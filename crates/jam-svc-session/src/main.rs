@@ -1663,11 +1663,17 @@ fn append_codex_args(command: &mut Command, spec: &SpawnSpec, worktree_path: &Pa
     command.arg("--dangerously-bypass-approvals-and-sandbox");
     command.arg("--json");
     command.arg("--model");
-    command.arg(spec.model_override.as_deref().unwrap_or(DEFAULT_CODEX_MODEL));
+    command.arg(
+        spec.model_override
+            .as_deref()
+            .unwrap_or(DEFAULT_CODEX_MODEL),
+    );
     command.arg("--config");
     command.arg(format!(
         "model_reasoning_effort=\"{}\"",
-        spec.reasoning_effort.as_deref().unwrap_or(DEFAULT_CODEX_REASONING_EFFORT)
+        spec.reasoning_effort
+            .as_deref()
+            .unwrap_or(DEFAULT_CODEX_REASONING_EFFORT)
     ));
     if spec.resume_from_last {
         command.arg("resume");

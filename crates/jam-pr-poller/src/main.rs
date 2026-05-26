@@ -17,7 +17,8 @@ use chrono::{DateTime, TimeDelta, Utc};
 use clap::Parser;
 use futures::StreamExt;
 use jam_events::generated::{
-    Event, PrBranchUpdated, PrCiStatusChanged, PrMerged, PrReviewReceived, PrStatusChanged,
+    Event, PrBranchUpdated, PrCiStatusChanged, PrMergeConflictDetected, PrMerged, PrReviewReceived,
+    PrStatusChanged,
 };
 use jam_events::EventEnvelope;
 use jam_nats::async_nats;
@@ -738,6 +739,30 @@ impl Poller {
             }
         }
 
+        if snapshot.is_dirty()
+            && !snapshot.merged
+            && snapshot.state == "open"
+            && !snapshot.draft
+            && record.last_merge_conflict_head.as_deref() != Some(&snapshot.head_sha)
+        {
+            record.last_merge_conflict_head = Some(snapshot.head_sha.clone());
+            let ctx = TraceCtx::new_root(
+                "pr-poller.merge-conflict-detected",
+                format!(
+                    "{} mergeable_state=dirty on {}",
+                    record.pr_ref, snapshot.head_sha
+                ),
+            );
+            let payload = PrMergeConflictDetected {
+                pr_ref: record.pr_ref.clone(),
+                task_id: record.task_id.clone(),
+                head_sha: snapshot.head_sha.clone(),
+                detected_at: now,
+            };
+            publish_journal_event(nats, payload, &ctx).await?;
+            record.last_activity_at = now;
+        }
+
         Ok(())
     }
 
@@ -831,6 +856,10 @@ struct ActivePr {
     /// rebasing (the call returns 202 the first time, then mergeable_state
     /// stays "behind" for a few seconds until the merge ref refreshes).
     last_update_branch_head: Option<String>,
+    /// `head_sha` we last emitted `pr.merge-conflict-detected` for. Dedupes
+    /// so we don't fire every poll cycle while conflicts persist on the same
+    /// revision.
+    last_merge_conflict_head: Option<String>,
 }
 
 impl ActivePr {
@@ -857,6 +886,7 @@ impl ActivePr {
             polls_total: 0,
             not_modified_total: 0,
             last_update_branch_head: None,
+            last_merge_conflict_head: None,
         })
     }
 
@@ -1185,6 +1215,10 @@ impl PullSnapshot {
     fn is_behind(&self) -> bool {
         self.mergeable_state.as_deref() == Some("behind")
     }
+
+    fn is_dirty(&self) -> bool {
+        self.mergeable_state.as_deref() == Some("dirty")
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1397,6 +1431,39 @@ mod tests {
             .unwrap();
             let snap = PullSnapshot::from_value(value).unwrap();
             assert!(!snap.is_behind(), "state={state}");
+        }
+    }
+
+    #[test]
+    fn pull_snapshot_is_dirty_when_mergeable_state_dirty() {
+        let value: serde_json::Value = serde_json::from_str(
+            r#"{
+                "state": "open", "draft": false, "merged": false,
+                "updated_at": "2026-05-17T00:00:00Z",
+                "head": {"sha": "abc"},
+                "mergeable_state": "dirty"
+            }"#,
+        )
+        .unwrap();
+        let snap = PullSnapshot::from_value(value).unwrap();
+        assert!(snap.is_dirty());
+        assert!(!snap.is_behind());
+    }
+
+    #[test]
+    fn pull_snapshot_is_not_dirty_for_other_states() {
+        for state in ["clean", "blocked", "behind", "unknown", "unstable", "draft"] {
+            let value: serde_json::Value = serde_json::from_str(&format!(
+                r#"{{
+                    "state": "open", "draft": false, "merged": false,
+                    "updated_at": "2026-05-17T00:00:00Z",
+                    "head": {{"sha": "abc"}},
+                    "mergeable_state": "{state}"
+                }}"#
+            ))
+            .unwrap();
+            let snap = PullSnapshot::from_value(value).unwrap();
+            assert!(!snap.is_dirty(), "state={state}");
         }
     }
 

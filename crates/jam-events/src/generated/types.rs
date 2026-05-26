@@ -558,6 +558,22 @@ impl Event for PrCiStatusChanged {
     const EVENT_SUBTYPE_VERSION: u32 = 1;
 }
 
+/// pr-status-poller observed mergeable_state=dirty on an open PR, indicating merge conflicts with the base branch.
+///
+/// Event type: `pr.merge-conflict-detected` (version 1).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrMergeConflictDetected {
+    pub pr_ref: String,
+    pub task_id: String,
+    pub head_sha: String,
+    pub detected_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl Event for PrMergeConflictDetected {
+    const EVENT_TYPE: &'static str = "pr.merge-conflict-detected";
+    const EVENT_SUBTYPE_VERSION: u32 = 1;
+}
+
 /// PR merged via GitHub UI (the only merge path — see principle-no-auto-merge).
 ///
 /// Event type: `pr.merged` (version 1).

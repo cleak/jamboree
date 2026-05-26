@@ -1,14 +1,23 @@
 ## Summary
 
-- Adds count badges to every left sidebar tab in the Jamboree UI.
-- Uses current task lifecycle data for task-oriented counts, including PRs as the number of tasks currently in a PR phase.
-- Keeps the task target boundary unchanged; Blueberry and Jamboree task creation/API behavior is not modified.
+- Moves the new-task composer into a centered, max-width position on both Dashboard and Tasks instead of keeping it in the right sidebar.
+- Restyles the task description control as a chat-style composer with Enter-to-submit and Shift+Enter for multi-line task text.
+- Keeps the Blueberry/Jamboree target selector visible directly above the composer so submissions preserve the explicit target boundary.
 
 ## Verification
 
-- `cd ui && npm ci` - installed dependencies from `package-lock.json`.
+- `cd ui && npm ci` - passed, installed locked UI dependencies.
 - `cd ui && npm run build` - passed.
+- `git diff --check` - passed.
+- `tempyr validate` - failed on pre-existing graph errors in `dec-post-picker-coordination`: missing `comp-jam-task-lifecycle` target and a missing reverse edge from `comp-jam-svc-session`.
+
+## Deployment
+
+- Not deployed; the task did not request a live deploy.
+- Build command for deployment path: `cd ui && npm run build`
+- Test commands for this UI change: `git diff --check` and `cd ui && npm run build`
+- Deploy command when approved: `jam deploy ui-server`
 
 ## Notes
 
-- Recorded the PR-phase count decision in Tempyr journal entry `j-e2aee7c8901d46edab1b76eba4806f5f`.
+- Recorded the layout decision in Tempyr journal entry `j-0b770512a7be4704af7df81279dd71b7`.

@@ -1,1 +1,1 @@
-feat(ui): show live counts in sidebar tabs
+feat(ui): center the new task composer

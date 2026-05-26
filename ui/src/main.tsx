@@ -931,6 +931,12 @@ function DashboardView(props: {
         <For each={stats()}>{(stat) => <StatTile stat={stat} />}</For>
       </section>
 
+      <TaskComposer
+        token={props.token}
+        state={props.createTaskState}
+        onState={props.onCreateTaskState}
+      />
+
       <section class="min-w-0 grid gap-5 xl:grid-cols-[minmax(0,1.5fr)_minmax(340px,0.7fr)]">
         <div class="min-w-0 space-y-5">
           <Panel title="Pipeline">
@@ -954,11 +960,6 @@ function DashboardView(props: {
         </div>
 
         <div class="min-w-0 space-y-5">
-          <TaskComposer
-            token={props.token}
-            state={props.createTaskState}
-            onState={props.onCreateTaskState}
-          />
           <Panel title="Quota">
             <QuotaSnapshotPanel
               rows={props.quotaRows}
@@ -1033,11 +1034,13 @@ function TaskComposer(props: {
   };
 
   return (
-    <Panel title="New Task">
-      <div class="grid gap-4 p-4">
-        <div class="grid gap-2">
-          <div class="text-xs font-medium text-[#666666]">Target</div>
-          <div class="grid gap-2 sm:grid-cols-2">
+    <section class="mx-auto w-full max-w-4xl rounded-lg border border-[#e5e5e5] bg-white shadow-[0_1px_2px_rgba(23,23,23,0.04)]">
+      <div class="grid gap-3 p-3 sm:p-4">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 class="text-base font-semibold">New Task</h2>
+          </div>
+          <div class="grid min-w-[min(100%,24rem)] gap-2 sm:grid-cols-2">
             <TaskTargetRadio
               checked={target() === "blueberry"}
               label="Blueberry"
@@ -1052,19 +1055,39 @@ function TaskComposer(props: {
             />
           </div>
         </div>
-        <label class="grid gap-1 text-xs text-[#62665e]">
-          Task
+
+        <div class="rounded-2xl border border-[#d7d7d7] bg-[#fcfcfb] p-2 shadow-[0_1px_6px_rgba(23,23,23,0.06)]">
           <textarea
-            class="min-h-32 w-full resize-y rounded-xl border border-[#d7d7d7] bg-white px-4 py-3 text-sm leading-6 text-[#171717] outline-none focus:border-[#9b9b9b] focus:ring-2 focus:ring-[#e8e8e8]"
+            aria-label="Task description"
+            class="min-h-24 w-full resize-y border-0 bg-transparent px-3 py-2 text-sm leading-6 text-[#171717] shadow-none outline-none focus:ring-0 sm:min-h-28"
+            data-jam-unstyled
             value={description()}
             onInput={(event) => setDescription(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                void submit();
+              }
+            }}
             placeholder={
               target() === "jamboree"
-                ? "Change the orchestrator, UI, services, docs, deploy flow, or integrations..."
-                : "Describe the Blueberry change or investigation..."
+                ? "Ask Jamboree to change its orchestrator, UI, services, docs, deploy flow, or integrations..."
+                : "Ask Jamboree to change or investigate Blueberry..."
             }
           />
-        </label>
+          <div class="flex flex-wrap items-end justify-between gap-3 border-t border-[#ecebe3] px-1 pt-2">
+            <CreateTaskFeedback state={props.state} />
+            <button
+              class="rounded-full bg-[#171717] px-5 py-2 text-sm font-medium text-white hover:bg-[#333333] disabled:cursor-not-allowed disabled:bg-[#a3a3a3]"
+              type="button"
+              disabled={props.state.status === "submitting" || !description().trim()}
+              onClick={submit}
+            >
+              {props.state.status === "submitting" ? "Adding" : "Add Task"}
+            </button>
+          </div>
+        </div>
+
         <div class="grid gap-3 sm:grid-cols-2">
           <label class="grid gap-1 text-xs text-[#62665e]">
             Class
@@ -1091,19 +1114,8 @@ function TaskComposer(props: {
             </select>
           </label>
         </div>
-        <div class="flex flex-wrap items-center justify-between gap-3">
-          <CreateTaskFeedback state={props.state} />
-          <button
-            class="rounded-full bg-[#171717] px-5 py-2 text-sm font-medium text-white hover:bg-[#333333] disabled:cursor-not-allowed disabled:bg-[#a3a3a3]"
-            type="button"
-            disabled={props.state.status === "submitting"}
-            onClick={submit}
-          >
-            {props.state.status === "submitting" ? "Adding" : "Add Task"}
-          </button>
-        </div>
       </div>
-    </Panel>
+    </section>
   );
 }
 
@@ -1368,7 +1380,12 @@ function TasksView(props: {
   );
   const hiddenCount = createMemo(() => props.rows.length - visible().length);
   return (
-    <div class="min-w-0 grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
+    <div class="min-w-0 grid gap-5">
+      <TaskComposer
+        token={props.token}
+        state={props.createTaskState}
+        onState={props.onCreateTaskState}
+      />
       <Panel title="Tasks">
         <Show when={hiddenCount() > 0}>
           <div class="flex items-center justify-between border-b border-[#ecebe3] px-4 py-2 text-xs text-[#62665e]">
@@ -1389,11 +1406,6 @@ function TasksView(props: {
         </Show>
         <TaskTable rows={visible()} />
       </Panel>
-      <TaskComposer
-        token={props.token}
-        state={props.createTaskState}
-        onState={props.onCreateTaskState}
-      />
     </div>
   );
 }

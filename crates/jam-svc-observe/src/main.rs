@@ -2208,12 +2208,16 @@ fn apply_quota_usage_observed(payload: &serde_json::Value, facts: &mut QuotaFact
         configured_quota_state(
             &harness,
             &window_kind,
-            "unknown",
+            "available",
             format!("{harness} {window_kind} usage observed"),
             "journal.quota.usage-observed",
             observed_at,
         )
     });
+    if state.status == "unknown" {
+        state.status = "available".into();
+        state.source = "journal.quota.usage-observed".into();
+    }
     apply_usage_observation(state, payload, observed_at);
 }
 
@@ -3208,6 +3212,50 @@ mod tests {
         assert_eq!(json["mergeability"]["status"], "clean");
         assert_eq!(json["touched_paths"][0], "feature.txt");
         assert_eq!(json["trunk_sha_now"].as_str().unwrap().len(), 40);
+    }
+
+    #[test]
+    fn usage_observed_without_window_config_shows_available() {
+        let tmp = TempDir::new().unwrap();
+        let day = tmp.path().join("2026-05-25");
+        std::fs::create_dir_all(&day).unwrap();
+        write_jsonl(
+            &day.join("journal.quota.jsonl"),
+            &serde_json::json!({
+                "event_type": "quota.usage-observed",
+                "payload": {
+                    "harness": "codex-cli",
+                    "window_kind": "local-messages",
+                    "session_id": "codex-cli:01TEST",
+                    "task_id": "t-test",
+                    "input_tokens": 1000,
+                    "output_tokens": 100,
+                    "source": "codex-json",
+                    "observed_at": "2026-05-25T20:00:00Z"
+                }
+            }),
+        );
+        let config_path = tmp.path().join("blueberry.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+[quota.api-budgets."opencode-deepseek/api-budget"]
+provider = "deepseek"
+model = "deepseek-v4-0324"
+monthly-cap-usd = 50.0
+spent-this-month-usd = 0.0
+current-input-rate-per-1m = 0.14
+current-output-rate-per-1m = 0.28
+"#,
+        )
+        .unwrap();
+        let st = state_with_journal_and_quota_config(tmp.path().to_path_buf(), Some(config_path));
+        let facts = read_quota_states(&st.config, Utc::now());
+        let state = &facts.states["codex-cli/local-messages"];
+        assert_eq!(
+            state.status, "available",
+            "subscription harness should default to available"
+        );
     }
 
     #[test]

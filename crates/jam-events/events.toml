@@ -263,6 +263,16 @@ fields = [
     { name = "requested_at", type = "datetime", required = true },
 ]
 
+[events."pr.merge-conflict-detected"]
+version = 1
+description = "pr-status-poller observed mergeable_state=dirty on an open PR, indicating merge conflicts with the base branch."
+fields = [
+    { name = "pr_ref",       type = "string",   required = true },
+    { name = "task_id",      type = "string",   required = true },
+    { name = "head_sha",     type = "string",   required = true },
+    { name = "detected_at",  type = "datetime", required = true },
+]
+
 [events."pr.merged"]
 version = 1
 description = "PR merged via GitHub UI (the only merge path — see principle-no-auto-merge)."

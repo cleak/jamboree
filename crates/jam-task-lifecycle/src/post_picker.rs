@@ -215,6 +215,41 @@ pub async fn handle_pr_ci_status_changed(
     publish_continuation(nats, &event, "ci-failed", &detail, &prompt, ctx, store).await;
 }
 
+pub async fn handle_pr_merge_conflict(
+    nats: &JamNats,
+    envelope: &JournalEnvelope,
+    ctx: &TraceCtx,
+    store: &std::sync::Arc<std::sync::Mutex<jam_task_store::TaskStore>>,
+) {
+    let task_id = envelope
+        .payload
+        .get("task_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    let pr_ref = envelope
+        .payload
+        .get("pr_ref")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    if task_id.is_empty() || pr_ref.is_empty() {
+        return;
+    }
+    let event = synth_exited_event(task_id);
+    let detail = format!("PR {pr_ref} has merge conflicts (mergeable_state=dirty).");
+    let prompt = format!(
+        "PR `{pr_ref}` for task `{task_id}` has merge conflicts with the base branch.\n\
+         \n\
+         From your worktree:\n\
+         1. `git fetch origin` and `git merge origin/main` to pull the base branch.\n\
+         2. Resolve all merge conflicts.\n\
+         3. `git add` the resolved files and `git commit` (do NOT amend or force-push).\n\
+         4. Verify the build/tests still pass locally.\n\
+         \n\
+         When the worktree is clean and tests pass, exit.",
+    );
+    publish_continuation(nats, &event, "merge-conflict", &detail, &prompt, ctx, store).await;
+}
+
 fn ci_status_is_failure(status: &str) -> bool {
     matches!(
         status.to_ascii_lowercase().as_str(),

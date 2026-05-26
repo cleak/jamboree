@@ -275,6 +275,9 @@ async fn handle_message(
         "pr.ci.status-changed" => {
             post_picker::handle_pr_ci_status_changed(nats, &envelope, &ctx, &state.store).await;
         }
+        "pr.merge-conflict-detected" => {
+            post_picker::handle_pr_merge_conflict(nats, &envelope, &ctx, &state.store).await;
+        }
         _ => {}
     }
 
